@@ -264,3 +264,92 @@ def send_message(
         player.write_log(f"[msg] {result}")
 
     return result
+
+
+_WHATSAPP_TOOL = "whatsapp_send"
+_WHATSAPP_REQUIRED = ["receiver", "message_text"]
+_CONFIRM_VALUES = {"yes", "true", "1", "confirm"}
+_CANCEL_WORDS = {"yes", "true", "1"}
+
+
+def whatsapp_send(
+    parameters: dict,
+    response=None,
+    player=None,
+    session_memory=None,
+) -> str:
+    """
+    Multi-turn WhatsApp send, built on the generic pending-action mechanism
+    (core/pending_action.py) — not a hardcoded WhatsApp-only if/else chain,
+    just this tool's own required-slot list. Reuses send_message()/
+    _send_whatsapp() unchanged for the actual send; this only adds
+    slot-filling + contact resolution + confirmation on top.
+    """
+    from core.pending_action import get_store
+    from core import contacts as contacts_mod
+
+    params = parameters or {}
+    receiver_in = (params.get("receiver") or params.get("recipient") or "").strip()
+    message_in = (params.get("message_text") or params.get("message") or "").strip()
+    confirmed = str(params.get("confirmed", "")).lower() in _CONFIRM_VALUES
+    cancel = str(params.get("cancel", "")).lower() in _CANCEL_WORDS
+
+    store = get_store()
+
+    if cancel:
+        if store.cancel():
+            return "Okay, cancelled. I won't send anything."
+        return "There's nothing pending to cancel."
+
+    pending = store.get_or_start(_WHATSAPP_TOOL, _WHATSAPP_REQUIRED)
+
+    if receiver_in and not pending.collected.get("receiver"):
+        pending.collected["receiver_raw"] = receiver_in
+    if message_in:
+        pending.collected["message_text"] = message_in
+
+    raw_recipient = pending.collected.get("receiver_raw", "")
+    if raw_recipient and not pending.collected.get("receiver"):
+        status, data = contacts_mod.resolve(raw_recipient)
+        if status == "resolved":
+            pending.collected["receiver"] = data
+        elif status == "ambiguous":
+            pending.touch()
+            choices = ", ".join(data)
+            return (
+                f"I found more than one saved contact matching '{raw_recipient}': "
+                f"{choices}. Which one did you mean?"
+            )
+        else:
+            # No known saved contact matches — the user has still explicitly
+            # named a recipient just now, so accept it as given (matches the
+            # existing app's WhatsApp-search-by-name behavior; the underlying
+            # backend has no visibility into WhatsApp's real contact list to
+            # verify further — see core/contacts.py's module docstring).
+            pending.collected["receiver"] = raw_recipient
+
+    pending.touch()
+
+    if pending.missing:
+        if "receiver" in pending.missing:
+            return "Who should I send it to?"
+        who = pending.collected.get("receiver", "them")
+        return f"What message should I send to {who}?"
+
+    if not confirmed:
+        return (
+            f"This will send a WhatsApp message to {pending.collected['receiver']}: "
+            f"\"{pending.collected['message_text']}\". "
+            f"Please confirm by calling again with confirmed='yes'."
+        )
+
+    result = send_message(
+        parameters={
+            "receiver": pending.collected["receiver"],
+            "message_text": pending.collected["message_text"],
+            "platform": "whatsapp",
+        },
+        player=player,
+    )
+    store.cancel()
+    return result

@@ -245,107 +245,212 @@ class _SysMetrics:
 
 _metrics = _SysMetrics()
 
+def _lerp_hex(c1: str, c2: str, t: float) -> str:
+    t = max(0.0, min(1.0, t))
+    a, b = QColor(c1), QColor(c2)
+    return QColor(
+        int(a.red()   + (b.red()   - a.red())   * t),
+        int(a.green() + (b.green() - a.green()) * t),
+        int(a.blue()  + (b.blue()  - a.blue())  * t),
+    ).name()
+
+
 class HudCanvas(QWidget):
+    """
+    Procedural containment-chamber / energy-reactor core visualization.
+    Fully live QPainter rendering — no images, no video, no pre-rendered frames.
+    """
+
+    N_FILAMENTS_UPPER = 130
+    N_FILAMENTS_LOWER = 130
+    N_BANDS           = 4
+    N_SPHERE_THREADS  = 14
+
     def __init__(self, face_path: str, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
         self.setMinimumSize(300, 300)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        self.muted    = False
-        self.speaking = False
-        self.state    = "INITIALISING"
+        # ── External state API (unchanged — MainWindow/JarvisUI write these) ──
+        self.muted     = False
+        self.speaking  = False
+        self.state     = "INITIALISING"
+        self.mic_level = 0.0   # real mic amplitude, 0..1, set via set_mic_level()
+        self.out_level = 0.0   # real JARVIS speech amplitude, 0..1, set via set_out_level()
 
-        self._tick       = 0
-        self._scale      = 1.0
-        self._tgt_scale  = 1.0
-        self._halo       = 55.0
-        self._tgt_halo   = 55.0
-        self._last_t     = time.time()
-        self._scan       = 0.0
-        self._scan2      = 180.0
-        self._rings      = [0.0, 120.0, 240.0]
-        self._pulses: list[float] = [0.0, 50.0, 100.0]
-        self._blink      = True
-        self._blink_tick = 0
-        self._particles: list[list[float]] = []
-        self._face_px: QPixmap | None = None
-        self._load_face(face_path)
+        self._tick             = 0
+        self._last_t            = time.time()
+        self._prev_state         = self.state
+        self._error_until        = 0.0
+        self._exec_burst_until   = 0.0
 
+        self._nucleus_scale     = 1.0
+        self._tgt_nucleus_scale = 1.0
+        self._nucleus_glow      = 60.0
+        self._tgt_nucleus_glow  = 60.0
+
+        self._sphere_scale      = 1.0
+        self._tgt_sphere_scale  = 1.0
+        self._energy_waves: list[float] = []
+
+        self._ring_rot_upper = 0.0
+        self._ring_rot_lower = 180.0
+
+        self._flow_phase   = 0.0
+        self._shimmer_tick = 0
+        self._filaments    = self._build_filaments()
+
+        self._sphere_threads = [
+            {
+                "a0":     random.uniform(0, 360),
+                "spd":    random.uniform(-2.2, 2.2) or 1.0,
+                "r_frac": random.uniform(0.38, 0.88),
+            }
+            for _ in range(self.N_SPHERE_THREADS)
+        ]
+
+        self._throttled = False
         self._tmr = QTimer(self)
         self._tmr.timeout.connect(self._step)
         self._tmr.start(16)
 
-    def _load_face(self, path: str):
-        try:
-            from PIL import Image, ImageDraw
-            import io
-            img = Image.open(path).convert("RGBA")
-            sz  = min(img.size)
-            img = img.resize((sz, sz), Image.LANCZOS)
-            mk  = Image.new("L", (sz, sz), 0)
-            ImageDraw.Draw(mk).ellipse((2, 2, sz - 2, sz - 2), fill=255)
-            img.putalpha(mk)
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            px = QPixmap(); px.loadFromData(buf.getvalue())
-            self._face_px = px
-        except Exception:
-            self._face_px = None
+    # ── Visibility-based throttling (minimized window / hidden widget) ──────
+    def set_throttled(self, on: bool):
+        if on == self._throttled:
+            return
+        self._throttled = on
+        self._tmr.start(220 if on else 16)
 
+    def hideEvent(self, e):
+        self.set_throttled(True)
+        super().hideEvent(e)
+
+    def showEvent(self, e):
+        self.set_throttled(False)
+        super().showEvent(e)
+
+    # ── Thread-safe level setters — call only from the Qt/main thread ───────
+    def set_mic_level(self, v: float):
+        self.mic_level = max(0.0, min(1.0, v))
+
+    def set_out_level(self, v: float):
+        self.out_level = max(0.0, min(1.0, v))
+
+    def _build_filaments(self):
+        fils = []
+        for group, n in (("upper", self.N_FILAMENTS_UPPER), ("lower", self.N_FILAMENTS_LOWER)):
+            for i in range(n):
+                theta = -68 + (136 * i / max(1, n - 1))
+                fils.append({
+                    "group":   group,
+                    "theta":   theta,
+                    "seed":    random.uniform(0, 6.283),
+                    "band":    random.randint(0, self.N_BANDS - 1),
+                    "len_jit": random.uniform(0.85, 1.08),
+                })
+        return fils
+
+    # ──────────────────────────────────────────────────────────────────────
     def _step(self):
         self._tick += 1
         now = time.time()
-        if now - self._last_t > (0.12 if self.speaking else 0.5):
-            if self.speaking:
-                self._tgt_scale = random.uniform(1.06, 1.14)
-                self._tgt_halo  = random.uniform(145, 190)
-            elif self.muted:
-                self._tgt_scale = random.uniform(0.998, 1.002)
-                self._tgt_halo  = random.uniform(15, 28)
-            else:
-                self._tgt_scale = random.uniform(1.001, 1.008)
-                self._tgt_halo  = random.uniform(48, 68)
+
+        if self.state != self._prev_state:
+            if self.state == "ERROR":
+                self._error_until = now + 1.1
+            if self.state == "EXECUTING":
+                self._exec_burst_until = now + 0.6
+            self._prev_state = self.state
+
+        speaking    = self.speaking or self.state == "SPEAKING"
+        listening   = self.state == "LISTENING"
+        thinking    = self.state == "THINKING"
+        executing   = self.state == "EXECUTING"
+        error_flash = now < self._error_until
+        exec_burst  = now < self._exec_burst_until
+
+        # ---- filament flow speed ----
+        base_flow = 1.0
+        if thinking or executing:
+            base_flow = 2.2
+        if exec_burst:
+            base_flow = 3.2
+        if speaking:
+            base_flow = 1.4 + self.out_level * 1.8
+        if listening:
+            base_flow = 1.1 + self.mic_level * 1.2
+        self._flow_phase += base_flow * 1.6
+
+        # ---- nucleus breathing / reactivity ----
+        if now - self._last_t > 0.5 and not speaking and not listening:
+            self._tgt_nucleus_scale = random.uniform(0.985, 1.02)
+            self._tgt_nucleus_glow  = random.uniform(50, 72)
             self._last_t = now
 
-        sp = 0.38 if self.speaking else 0.15
-        self._scale += (self._tgt_scale - self._scale) * sp
-        self._halo  += (self._tgt_halo  - self._halo)  * sp
+        if speaking:
+            # driven directly by real output amplitude — no fixed fake cycle
+            self._tgt_nucleus_scale = 1.0 + self.out_level * 0.34
+            self._tgt_nucleus_glow  = 70 + self.out_level * 190
+        elif listening:
+            self._tgt_nucleus_scale = 1.0 + self.mic_level * 0.16
+            self._tgt_nucleus_glow  = 55 + self.mic_level * 130
+        elif thinking or executing:
+            self._tgt_nucleus_glow = 200 if exec_burst else 100
 
-        speeds = [1.3, -0.9, 2.0] if self.speaking else [0.55, -0.35, 0.9]
-        for i, spd in enumerate(speeds):
-            self._rings[i] = (self._rings[i] + spd) % 360
+        if error_flash:
+            self._tgt_nucleus_glow = random.uniform(90, 170)
 
-        self._scan  = (self._scan  + (3.0 if self.speaking else 1.3)) % 360
-        self._scan2 = (self._scan2 + (-2.0 if self.speaking else -0.75)) % 360
+        sp = 0.42 if (speaking or listening) else 0.14
+        self._nucleus_scale += (self._tgt_nucleus_scale - self._nucleus_scale) * sp
+        self._nucleus_glow  += (self._tgt_nucleus_glow  - self._nucleus_glow)  * sp
 
-        fw  = min(self.width(), self.height())
-        lim = fw * 0.74
-        spd = 4.2 if self.speaking else 2.0
-        self._pulses = [r + spd for r in self._pulses if r + spd < lim]
-        if len(self._pulses) < 3 and random.random() < (0.07 if self.speaking else 0.025):
-            self._pulses.append(0.0)
+        # ---- sphere field scale ----
+        self._tgt_sphere_scale = 1.0
+        if listening:
+            self._tgt_sphere_scale = 1.0 + self.mic_level * 0.10
+        if thinking or executing:
+            self._tgt_sphere_scale = 1.05
+        self._sphere_scale += (self._tgt_sphere_scale - self._sphere_scale) * 0.12
 
-        if self.speaking and random.random() < 0.28:
-            cx, cy = self.width() / 2, self.height() / 2
-            ang = random.uniform(0, 2 * math.pi)
-            r_s = fw * 0.28
-            self._particles.append([
-                cx + math.cos(ang) * r_s, cy + math.sin(ang) * r_s,
-                math.cos(ang) * random.uniform(0.9, 2.4),
-                math.sin(ang) * random.uniform(0.9, 2.4) - 0.4, 1.0,
-            ])
-        self._particles = [
-            [p[0]+p[2], p[1]+p[3], p[2]*0.97, p[3]*0.97, p[4]-0.028]
-            for p in self._particles if p[4] > 0
-        ]
+        # ---- outward energy waves (speech-amplitude driven) ----
+        fw  = min(self.width(), self.height()) or 1
+        lim = fw * 0.62
+        wave_spd = 3.0 + (self.out_level * 6.0 if speaking else 0.0)
+        self._energy_waves = [r + wave_spd for r in self._energy_waves if r + wave_spd < lim]
+        if speaking and self.out_level > 0.16 and len(self._energy_waves) < 5 \
+                and random.random() < min(0.5, self.out_level):
+            self._energy_waves.append(0.0)
+        elif not speaking and len(self._energy_waves) < 2 and random.random() < 0.01:
+            self._energy_waves.append(0.0)
 
-        self._blink_tick += 1
-        if self._blink_tick >= 38:
-            self._blink = not self._blink
-            self._blink_tick = 0
+        # ---- containment ring rotation ----
+        ring_spd = 0.5
+        if thinking or executing:
+            ring_spd = 1.4
+        if exec_burst:
+            ring_spd = 2.6
+        if error_flash:
+            ring_spd = random.uniform(-2.0, 2.0)
+        self._ring_rot_upper = (self._ring_rot_upper + ring_spd) % 360
+        self._ring_rot_lower = (self._ring_rot_lower - ring_spd * 0.7) % 360
+
+        # ---- sphere internal threads ----
+        thread_mul = 2.4 if (thinking or executing or speaking) else 1.0
+        for th in self._sphere_threads:
+            th["a0"] = (th["a0"] + th["spd"] * thread_mul) % 360
+
+        # ---- filament shimmer: rotate a few filaments through brightness bands ----
+        self._shimmer_tick += 1
+        if self._shimmer_tick >= 5:
+            self._shimmer_tick = 0
+            for _ in range(6):
+                f = self._filaments[random.randrange(len(self._filaments))]
+                f["band"] = random.randint(0, self.N_BANDS - 1)
+
         self.update()
 
+    # ──────────────────────────────────────────────────────────────────────
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -354,154 +459,179 @@ class HudCanvas(QWidget):
         W, H = self.width(), self.height()
         cx, cy = W / 2, H / 2
         fw = min(W, H)
+        if fw <= 0:
+            return
 
-        # grid dots
+        now = time.time()
+        error_frac = 0.0
+        if now < self._error_until:
+            error_frac = max(0.0, min(1.0, (self._error_until - now) / 1.1))
+        executing = self.state == "EXECUTING"
+
+        base_hex = C.MUTED_C if self.muted else _lerp_hex(C.PRI, C.RED, error_frac)
+
+        # grid dots — faint depth cue
         p.setPen(QPen(qcol(C.PRI_GHO), 1))
         for x in range(0, W, 48):
             for y in range(0, H, 48):
                 p.drawPoint(x, y)
 
-        r_face = fw * 0.31
+        upper_cx, upper_cy = cx, cy - fw * 0.34
+        lower_cx, lower_cy = cx, cy + fw * 0.36
+        rx_upper, ry_upper = fw * 0.30, fw * 0.11
+        rx_lower, ry_lower = fw * 0.34, fw * 0.12
+        nucleus_r = fw * 0.095 * self._nucleus_scale
+        sphere_r  = fw * 0.29 * self._sphere_scale
 
-        # halo glow
-        for i in range(10):
-            r   = r_face * (1.8 - i * 0.08)
-            frc = 1.0 - i / 10
-            a   = max(0, min(255, int(self._halo * 0.085 * frc)))
-            col = qcol(C.MUTED_C if self.muted else C.PRI, a)
-            p.setPen(QPen(col, 1.5)); p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
-
-        # pulse rings
-        for pr in self._pulses:
-            a   = max(0, int(230 * (1.0 - pr / (fw * 0.74))))
-            col = qcol(C.MUTED_C if self.muted else C.PRI, a)
-            p.setPen(QPen(col, 1.5)); p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawEllipse(QRectF(cx - pr, cy - pr, pr * 2, pr * 2))
-
-        # spinning arc rings
-        for idx, (r_frac, w_r, arc_l, gap) in enumerate(
-            [(0.48, 3, 115, 78), (0.40, 2, 78, 55), (0.32, 1, 56, 40)]
+        # ── Upper containment structure — layered illuminated arcs ─────────
+        for idx, (r_scale, w_r, arc_l, gap) in enumerate(
+            [(1.0, 3, 70, 50), (0.72, 2, 50, 38), (0.48, 1.5, 34, 28)]
         ):
-            ring_r = fw * r_frac
-            base   = self._rings[idx]
-            a_val  = max(0, min(255, int(self._halo * (1.0 - idx * 0.18))))
-            col    = qcol(C.MUTED_C if self.muted else C.PRI, a_val)
+            rx, ry = rx_upper * r_scale, ry_upper * r_scale
+            a_val  = max(0, min(255, int(60 + self._nucleus_glow * (0.6 - idx * 0.12))))
+            col    = qcol(base_hex, a_val)
             p.setPen(QPen(col, w_r)); p.setBrush(Qt.BrushStyle.NoBrush)
-            angle = base
-            rect  = QRectF(cx - ring_r, cy - ring_r, ring_r * 2, ring_r * 2)
-            while angle < base + 360:
+            rect  = QRectF(upper_cx - rx, upper_cy - ry, rx * 2, ry * 2)
+            angle = self._ring_rot_upper + idx * 37
+            while angle < self._ring_rot_upper + 360:
                 p.drawArc(rect, int(angle * 16), int(arc_l * 16))
                 angle += arc_l + gap
 
-        # scanners
-        sr = fw * 0.50
-        sa = min(255, int(self._halo * 1.5))
-        ex = 75 if self.speaking else 44
-        p.setPen(QPen(qcol(C.MUTED_C if self.muted else C.PRI, sa), 2.5))
+        # ── Lower reactor base — outer ring + radial illuminated channels ───
+        a_base = max(0, min(255, int(50 + self._nucleus_glow * 0.55)))
+        p.setPen(QPen(qcol(base_hex, a_base), 2))
         p.setBrush(Qt.BrushStyle.NoBrush)
-        srect = QRectF(cx - sr, cy - sr, sr * 2, sr * 2)
-        p.drawArc(srect, int(self._scan * 16), int(ex * 16))
-        p.setPen(QPen(qcol(C.ACC, sa // 2), 1.5))
-        p.drawArc(srect, int(self._scan2 * 16), int(ex * 16))
-
-        # tick marks
-        t_out, t_in = fw * 0.497, fw * 0.474
-        p.setPen(QPen(qcol(C.PRI, 140), 1))
-        for deg in range(0, 360, 10):
+        p.drawEllipse(QRectF(lower_cx - rx_lower, lower_cy - ry_lower, rx_lower * 2, ry_lower * 2))
+        n_spokes = 16
+        spoke_origin = QPointF(cx, cy + fw * 0.06)
+        for i in range(n_spokes):
+            deg = (i / n_spokes) * 360 + self._ring_rot_lower * 0.4
             rad = math.radians(deg)
-            inn = t_in if deg % 30 == 0 else t_in + 6
-            p.drawLine(
-                QPointF(cx + t_out * math.cos(rad), cy - t_out * math.sin(rad)),
-                QPointF(cx + inn  * math.cos(rad), cy - inn  * math.sin(rad)),
-            )
+            ex_ = lower_cx + rx_lower * math.cos(rad)
+            ey_ = lower_cy + ry_lower * math.sin(rad) * 0.9
+            flick = 0.6 + 0.4 * math.sin(self._tick * 0.05 + i)
+            a_sp  = max(0, min(255, int(a_base * flick)))
+            p.setPen(QPen(qcol(base_hex, a_sp), 1.2))
+            p.drawLine(spoke_origin, QPointF(ex_, ey_))
 
-        # crosshair
-        ch_r, gap_h = fw * 0.51, fw * 0.16
-        p.setPen(QPen(qcol(C.PRI, int(self._halo * 0.5)), 1))
-        p.drawLine(QPointF(cx - ch_r, cy), QPointF(cx - gap_h, cy))
-        p.drawLine(QPointF(cx + gap_h, cy), QPointF(cx + ch_r, cy))
-        p.drawLine(QPointF(cx, cy - ch_r), QPointF(cx, cy - gap_h))
-        p.drawLine(QPointF(cx, cy + gap_h), QPointF(cx, cy + ch_r))
+        # ── Filaments: upper→nucleus and nucleus→lower, batched by band ────
+        jit_amp   = fw * (0.05 if error_frac > 0.1 else 0.028)
+        focus_mul = 0.55 if executing else 1.0
+        band_paths = [QPainterPath() for _ in range(self.N_BANDS)]
 
-        # corner brackets
-        bl = 24
-        bc = qcol(C.PRI, 210)
-        hl, hr = cx - fw // 2, cx + fw // 2
-        ht, hb = cy - fw // 2, cy + fw // 2
-        p.setPen(QPen(bc, 2))
-        for bx, by, dx, dy in [(hl,ht,1,1),(hr,ht,-1,1),(hl,hb,1,-1),(hr,hb,-1,-1)]:
-            p.drawLine(QPointF(bx, by), QPointF(bx + dx * bl, by))
-            p.drawLine(QPointF(bx, by), QPointF(bx, by + dy * bl))
+        for f in self._filaments:
+            theta = f["theta"] * focus_mul
+            rad   = math.radians(270 + theta) if f["group"] == "upper" else math.radians(90 + theta)
+            if f["group"] == "upper":
+                sx = upper_cx + rx_upper * math.cos(rad)
+                sy = upper_cy + ry_upper * math.sin(rad)
+                ex, ey = cx, cy
+            else:
+                sx, sy = cx, cy
+                ex = lower_cx + rx_lower * math.cos(rad)
+                ey = lower_cy + ry_lower * math.sin(rad)
 
-        # face
-        if self._face_px:
-            fsz    = int(fw * 0.62 * self._scale)
-            scaled = self._face_px.scaled(
-                fsz, fsz,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            p.drawPixmap(int(cx - fsz / 2), int(cy - fsz / 2), scaled)
-        else:
-            orb_r = int(fw * 0.27 * self._scale)
-            oc    = (200, 0, 50) if self.muted else (0, 60, 110)
-            for i in range(8, 0, -1):
-                r2  = int(orb_r * i / 8)
-                frc = i / 8
-                a   = max(0, min(255, int(self._halo * 1.1 * frc)))
-                p.setBrush(QBrush(QColor(int(oc[0]*frc), int(oc[1]*frc), int(oc[2]*frc), a)))
-                p.setPen(Qt.PenStyle.NoPen)
-                p.drawEllipse(QRectF(cx - r2, cy - r2, r2 * 2, r2 * 2))
-            p.setPen(QPen(qcol(C.PRI, min(255, int(self._halo * 2))), 1))
-            p.setFont(QFont("Courier New", 13, QFont.Weight.Bold))
-            p.drawText(QRectF(cx - 80, cy - 14, 160, 28),
-                       Qt.AlignmentFlag.AlignCenter, "J.A.R.V.I.S")
+            end_pull = nucleus_r * f["len_jit"]
+            dx, dy = ex - sx, ey - sy
+            dist = math.hypot(dx, dy) or 1.0
+            ux, uy = dx / dist, dy / dist
+            if f["group"] == "upper":
+                ex, ey = ex - ux * end_pull, ey - uy * end_pull
+            else:
+                sx, sy = sx + ux * end_pull, sy + uy * end_pull
 
-        # particles
-        for pt in self._particles:
-            a = max(0, min(255, int(pt[4] * 255)))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QBrush(qcol(C.PRI, a)))
-            p.drawEllipse(QPointF(pt[0], pt[1]), 2.5, 2.5)
+            mx, my = (sx + ex) / 2, (sy + ey) / 2
+            jit = jit_amp * math.sin(f["seed"] + self._flow_phase * 0.02)
+            px_, py_ = -uy * jit, ux * jit
 
-        # status text
-        sy = cy + fw * 0.40
+            path = band_paths[f["band"]]
+            path.moveTo(sx, sy)
+            path.quadTo(mx + px_, my + py_, ex, ey)
+
+        # NOTE: pen width is clamped to <= 1.0 deliberately. Qt's raster engine
+        # has a steep performance cliff above width 1.0 px — it switches from
+        # a fast hairline rasterizer to full QPainterPathStroker-based outline
+        # generation (geometric join/cap polygons per dash segment), which
+        # measured 40-85ms per drawPath() call here with ~130 subpaths and
+        # RoundCap, vs ~0.3-1.5ms at width<=1.0. Confirmed via direct
+        # instrumentation before landing on this fix — see conversation
+        # verification notes, not guessed.
+        band_alpha  = [70, 110, 160, 225]
+        band_width  = [0.7, 0.8, 0.9, 1.0]
+        for bi, path in enumerate(band_paths):
+            col = qcol(_lerp_hex(base_hex, C.WHITE, 0.15 + bi * 0.18), band_alpha[bi])
+            pen = QPen(col, band_width[bi])
+            pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+            pen.setStyle(Qt.PenStyle.CustomDashLine)
+            pen.setDashPattern([1.6, 2.6])
+            pen.setDashOffset(self._flow_phase * (0.8 + bi * 0.1))
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawPath(path)
+
+        # ── Translucent spherical energy field around the nucleus ──────────
+        grad = QRadialGradient(QPointF(cx, cy), sphere_r)
+        grad.setColorAt(0.0, qcol(base_hex, 46))
+        grad.setColorAt(0.75, qcol(base_hex, 24))
+        grad.setColorAt(1.0, qcol(base_hex, 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(grad))
+        p.drawEllipse(QPointF(cx, cy), sphere_r, sphere_r)
+        p.setPen(QPen(qcol(base_hex, 90), 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(QPointF(cx, cy), sphere_r, sphere_r)
+
+        # internal energy threads inside the sphere
+        for th in self._sphere_threads:
+            r_th = sphere_r * th["r_frac"]
+            rect = QRectF(cx - r_th, cy - r_th, r_th * 2, r_th * 2)
+            a_th = max(0, min(255, int(60 + self._nucleus_glow * 0.6)))
+            p.setPen(QPen(qcol(_lerp_hex(base_hex, C.WHITE, 0.3), a_th), 1))
+            p.drawArc(rect, int(th["a0"] * 16), int(70 * 16))
+
+        # outward energy waves (speaking)
+        for wr in self._energy_waves:
+            a_w = max(0, int(200 * (1.0 - wr / (fw * 0.62))))
+            p.setPen(QPen(qcol(base_hex, a_w), 1.4))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QPointF(cx, cy), wr, wr)
+
+        # ── Bright central nucleus ───────────────────────────────────────
+        ngrad = QRadialGradient(QPointF(cx, cy), nucleus_r)
+        glow_t = max(0.0, min(1.0, self._nucleus_glow / 220.0))
+        ngrad.setColorAt(0.0, qcol(C.WHITE, min(255, int(180 + 75 * glow_t))))
+        ngrad.setColorAt(0.45, qcol(_lerp_hex(base_hex, C.WHITE, 0.5), min(255, int(140 + 100 * glow_t))))
+        ngrad.setColorAt(1.0, qcol(base_hex, 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(ngrad))
+        p.drawEllipse(QPointF(cx, cy), nucleus_r, nucleus_r)
+
+        # ── Status text ──────────────────────────────────────────────────
+        blink = (self._tick // 19) % 2 == 0
+        sy = cy + fw * 0.46
         if self.muted:
-            txt, col = "⊘  MUTED",     qcol(C.MUTED_C)
-        elif self.speaking:
-            txt, col = "●  SPEAKING",  qcol(C.ACC)
+            txt, col = "⊘  MUTED", qcol(C.MUTED_C)
+        elif error_frac > 0.05:
+            txt, col = "⚠  INSTABILITY", qcol(C.RED)
+        elif self.speaking or self.state == "SPEAKING":
+            txt, col = "●  SPEAKING", qcol(C.ACC)
+        elif self.state == "EXECUTING":
+            sym = "▷" if blink else "▶"
+            txt, col = f"{sym}  EXECUTING", qcol(C.ACC2)
         elif self.state == "THINKING":
-            sym = "◈" if self._blink else "◇"
-            txt, col = f"{sym}  THINKING",   qcol(C.ACC2)
-        elif self.state == "PROCESSING":
-            sym = "▷" if self._blink else "▶"
-            txt, col = f"{sym}  PROCESSING", qcol(C.ACC2)
+            sym = "◈" if blink else "◇"
+            txt, col = f"{sym}  THINKING", qcol(C.ACC2)
         elif self.state == "LISTENING":
-            sym = "●" if self._blink else "○"
-            txt, col = f"{sym}  LISTENING",  qcol(C.GREEN)
+            sym = "●" if blink else "○"
+            txt, col = f"{sym}  LISTENING", qcol(C.GREEN)
         else:
-            sym = "●" if self._blink else "○"
+            sym = "●" if blink else "○"
             txt, col = f"{sym}  {self.state}", qcol(C.PRI)
 
         p.setPen(QPen(col, 1))
         p.setFont(QFont("Courier New", 11, QFont.Weight.Bold))
         p.drawText(QRectF(0, sy, W, 26), Qt.AlignmentFlag.AlignCenter, txt)
 
-        # waveform
-        wy = sy + 30
-        N, bw = 36, 8
-        wx0 = (W - N * bw) / 2
-        for i in range(N):
-            if self.muted:
-                hgt, cl = 2, qcol(C.MUTED_C)
-            elif self.speaking:
-                hgt = random.randint(3, 20)
-                cl  = qcol(C.PRI) if hgt > 12 else qcol(C.PRI_DIM)
-            else:
-                hgt = int(3 + 2 * math.sin(self._tick * 0.09 + i * 0.6))
-                cl  = qcol(C.BORDER_B)
-            p.fillRect(QRectF(wx0 + i * bw, wy + 20 - hgt, bw - 1, hgt), cl)
 
 class MetricBar(QWidget):
 
@@ -928,8 +1058,9 @@ class _CameraPreview(QWidget):
 class SetupOverlay(QWidget):
     done = pyqtSignal(str, str)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, force_gemini_reentry: bool = False):
         super().__init__(parent)
+        self._force_gemini_reentry = force_gemini_reentry
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(f"""
             SetupOverlay {{
@@ -965,21 +1096,59 @@ class SetupOverlay(QWidget):
         sep.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep)
         layout.addSpacing(4)
 
-        layout.addWidget(_lbl("GEMINI API KEY", 8, color=C.TEXT_DIM,
+        # ── Text / Reasoning Provider (informational — never editable here) ──
+        layout.addWidget(_lbl("TEXT / REASONING PROVIDER", 8, color=C.TEXT_DIM,
                                align=Qt.AlignmentFlag.AlignLeft))
-        self._key_input = QLineEdit()
-        self._key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self._key_input.setPlaceholderText("AIza…")
-        self._key_input.setFont(QFont("Courier New", 10))
-        self._key_input.setFixedHeight(32)
-        self._key_input.setStyleSheet(f"""
-            QLineEdit {{
-                background: #000d12; color: {C.TEXT};
-                border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px 8px;
-            }}
-            QLineEdit:focus {{ border: 1px solid {C.PRI}; }}
-        """)
-        layout.addWidget(self._key_input)
+        provider_id, provider_ok, provider_detail = self._detect_provider()
+        if provider_ok:
+            layout.addWidget(_lbl(f"✓ Configured — {provider_id}", 8, color=C.GREEN,
+                                   align=Qt.AlignmentFlag.AlignLeft))
+        else:
+            layout.addWidget(_lbl(f"✗ Not configured — {provider_detail}", 8, color=C.RED,
+                                   align=Qt.AlignmentFlag.AlignLeft))
+        layout.addSpacing(10)
+
+        sep_p = QFrame(); sep_p.setFrameShape(QFrame.Shape.HLine)
+        sep_p.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep_p)
+        layout.addSpacing(4)
+
+        # ── Gemini Live Voice ─────────────────────────────────────────────
+        layout.addWidget(_lbl("GEMINI LIVE VOICE", 8, color=C.TEXT_DIM,
+                               align=Qt.AlignmentFlag.AlignLeft))
+        layout.addWidget(_lbl("Required specifically for real-time voice.", 8,
+                               color=C.PRI_DIM, align=Qt.AlignmentFlag.AlignLeft))
+
+        # Presence of GEMINI_API_KEY in the environment doesn't mean it's
+        # valid — force_gemini_reentry is set when we're here specifically
+        # because main.py's Live connection rejected the current key, so the
+        # field must be shown even though something is technically "set".
+        self._gemini_live_configured = (
+            bool(os.environ.get("GEMINI_API_KEY", "").strip())
+            and not force_gemini_reentry
+        )
+        self._key_input = None
+        if self._gemini_live_configured:
+            layout.addWidget(_lbl("✓ Configured", 8, color=C.GREEN,
+                                   align=Qt.AlignmentFlag.AlignLeft))
+        else:
+            if force_gemini_reentry:
+                layout.addWidget(_lbl("⚠ Previous key was rejected — enter a new key.", 8,
+                                       color=C.RED, align=Qt.AlignmentFlag.AlignLeft))
+            layout.addWidget(_lbl("GEMINI LIVE API KEY", 8, color=C.TEXT_DIM,
+                                   align=Qt.AlignmentFlag.AlignLeft))
+            self._key_input = QLineEdit()
+            self._key_input.setEchoMode(QLineEdit.EchoMode.Password)
+            self._key_input.setPlaceholderText("AIza…")
+            self._key_input.setFont(QFont("Courier New", 10))
+            self._key_input.setFixedHeight(32)
+            self._key_input.setStyleSheet(f"""
+                QLineEdit {{
+                    background: #000d12; color: {C.TEXT};
+                    border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px 8px;
+                }}
+                QLineEdit:focus {{ border: 1px solid {C.PRI}; }}
+            """)
+            layout.addWidget(self._key_input)
         layout.addSpacing(12)
 
         sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
@@ -1022,6 +1191,16 @@ class SetupOverlay(QWidget):
         init_btn.clicked.connect(self._submit)
         layout.addWidget(init_btn)
 
+    @staticmethod
+    def _detect_provider() -> tuple[str, bool, str]:
+        """Reports get_provider()'s outcome without ever surfacing LLM_API_KEY."""
+        try:
+            from core.ai_provider import get_provider
+            p = get_provider()
+            return p.provider_id, True, ""
+        except Exception as e:
+            return "", False, str(e)
+
     def _sel(self, key: str):
         self._sel_os = key
         pal = {"windows":(C.PRI,"#001a22"),"mac":(C.ACC2,"#1a1400"),"linux":(C.GREEN,"#001a0d")}
@@ -1044,13 +1223,15 @@ class SetupOverlay(QWidget):
                 """)
 
     def _submit(self):
-        key = self._key_input.text().strip()
-        if not key:
-            self._key_input.setStyleSheet(
-                self._key_input.styleSheet() +
-                f" QLineEdit {{ border: 1px solid {C.RED}; }}"
-            )
-            return
+        key = ""
+        if self._key_input is not None:
+            key = self._key_input.text().strip()
+            if not key:
+                self._key_input.setStyleSheet(
+                    self._key_input.styleSheet() +
+                    f" QLineEdit {{ border: 1px solid {C.RED}; }}"
+                )
+                return
         self.done.emit(key, self._sel_os)
 
 
@@ -1286,10 +1467,12 @@ class MainWindow(QMainWindow):
     _log_sig     = pyqtSignal(str)
     _state_sig   = pyqtSignal(str)
     _content_sig = pyqtSignal(str, str)   # (title, text) — thread-safe content display
-    _reconfig_sig = pyqtSignal()          # trigger setup overlay from any thread
+    _reconfig_sig = pyqtSignal(bool)      # trigger setup overlay from any thread; True = force Gemini Live re-entry
     _camera_sig     = pyqtSignal(bytes)   # show camera frame preview (small overlay)
     _cam_stream_sig = pyqtSignal(bool)   # True=start live stream, False=stop
     _cam_frame_sig  = pyqtSignal(bytes)  # live camera frame → HUD area
+    _mic_level_sig  = pyqtSignal(float)  # real mic amplitude (0..1) → HUD core, thread-safe
+    _out_level_sig  = pyqtSignal(float)  # real JARVIS speech amplitude (0..1) → HUD core, thread-safe
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -1412,6 +1595,8 @@ class MainWindow(QMainWindow):
         self._camera_sig.connect(self._show_camera_frame)
         self._cam_stream_sig.connect(self._on_cam_stream)
         self._cam_frame_sig.connect(self._on_cam_frame)
+        self._mic_level_sig.connect(self.hud.set_mic_level)
+        self._out_level_sig.connect(self.hud.set_out_level)
         self._cam_stop = threading.Event()
 
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
@@ -1774,11 +1959,16 @@ class MainWindow(QMainWindow):
         else:
             self.showFullScreen()
 
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == event.Type.WindowStateChange:
+            self.hud.set_throttled(bool(self.windowState() & Qt.WindowState.WindowMinimized))
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         cw = self.centralWidget()
         if self._overlay and self._overlay.isVisible():
-            ow, oh = 460, 390
+            ow, oh = 460, 460
             self._overlay.setGeometry(
                 (cw.width()  - ow) // 2,
                 (cw.height() - oh) // 2,
@@ -2236,7 +2426,7 @@ class MainWindow(QMainWindow):
 
         lay.addWidget(_fl("[F4] Mute  ·  [F11] Fullscreen"))
         lay.addStretch()
-        lay.addWidget(_fl("FatihMakes Industries  ·  MARK XLVIII  ·  CLASSIFIED"))
+        lay.addWidget(_fl("MARK XLVIII  ·  Created by Tauqeer  ·  CLASSIFIED"))
         lay.addStretch()
         lay.addWidget(_fl("© STARK INDUSTRIES", C.PRI_DIM))
         return w
@@ -2338,17 +2528,29 @@ class MainWindow(QMainWindow):
         self.hud.speaking = (state == "SPEAKING")
 
     def _check_config(self) -> bool:
-        if not API_FILE.exists(): return False
-        try:
-            d = json.loads(API_FILE.read_text(encoding="utf-8"))
-            return bool(d.get("gemini_api_key")) and bool(d.get("os_system"))
-        except Exception:
-            return False
+        """
+        Three independent readiness signals:
+          - os_system      : non-secret app config, still from config/api_keys.json.
+          - gemini_live     : GEMINI_API_KEY present in the environment (.env).
+          - text/reasoning  : get_provider() resolves without ProviderConfigError.
+        Only os_system + gemini_live gate the setup overlay — Live voice is
+        core to booting Mark at all. Text/reasoning provider status is
+        informational (shown in the overlay) and does not block startup.
+        """
+        os_ready = False
+        if API_FILE.exists():
+            try:
+                d = json.loads(API_FILE.read_text(encoding="utf-8"))
+                os_ready = bool(d.get("os_system"))
+            except Exception:
+                os_ready = False
+        gemini_live_ready = bool(os.environ.get("GEMINI_API_KEY", "").strip())
+        return os_ready and gemini_live_ready
 
-    def _show_setup(self):
-        ov = SetupOverlay(self.centralWidget())
+    def _show_setup(self, force_gemini_reentry: bool = False):
+        ov = SetupOverlay(self.centralWidget(), force_gemini_reentry=force_gemini_reentry)
         cw = self.centralWidget()
-        ow, oh = 460, 390
+        ow, oh = 460, 460
         ov.setGeometry(
             (cw.width()  - ow) // 2,
             (cw.height() - oh) // 2,
@@ -2359,12 +2561,28 @@ class MainWindow(QMainWindow):
         self._overlay = ov
 
     def _on_setup_done(self, key: str, os_name: str):
+        # os_system is non-secret app config — stays in config/api_keys.json.
+        # API keys never get written there.
         os.makedirs(CONFIG_DIR, exist_ok=True)
-        API_FILE.write_text(
-            json.dumps({"gemini_api_key": key, "os_system": os_name}, indent=4),
-            encoding="utf-8",
-        )
-        self._ready = True
+        existing = {}
+        if API_FILE.exists():
+            try:
+                existing = json.loads(API_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                existing = {}
+        existing.pop("gemini_api_key", None)
+        existing["os_system"] = os_name
+        API_FILE.write_text(json.dumps(existing, indent=4), encoding="utf-8")
+
+        if key:  # only non-empty when Gemini Live key was actually missing/entered
+            env_path = BASE_DIR / ".env"
+            if not env_path.exists():
+                env_path.touch()
+            from dotenv import set_key
+            set_key(str(env_path), "GEMINI_API_KEY", key, quote_mode="never")
+            os.environ["GEMINI_API_KEY"] = key
+
+        self._ready = self._check_config()
         if self._overlay:
             self._overlay.hide()
             self._overlay = None
@@ -2431,6 +2649,14 @@ class JarvisUI:
     def set_state(self, state: str):
         self._win._state_sig.emit(state)
 
+    def set_mic_level(self, level: float):
+        """Thread-safe: real microphone amplitude (0..1), drives the HUD core while LISTENING."""
+        self._win._mic_level_sig.emit(level)
+
+    def set_speaker_level(self, level: float):
+        """Thread-safe: real JARVIS speech amplitude (0..1), drives the HUD core while SPEAKING."""
+        self._win._out_level_sig.emit(level)
+
     def write_log(self, text: str):
         self._win._log_sig.emit(text)
 
@@ -2443,9 +2669,12 @@ class JarvisUI:
         self._win._content_sig.emit(title[:48], text[:4000])
 
     def prompt_reconfig(self):
-        """Thread-safe: show the API key setup overlay (e.g. after an auth error)."""
+        """Thread-safe: show the API key setup overlay after an auth error.
+        Forces the Gemini Live key field to appear even though GEMINI_API_KEY
+        is already set in the environment — its mere presence doesn't mean
+        it's valid, and this is only ever called because it wasn't."""
         self._win._ready = False
-        self._win._reconfig_sig.emit()
+        self._win._reconfig_sig.emit(True)
 
     def show_camera_frame(self, img_bytes: bytes):
         """Thread-safe: show a webcam frame in the small overlay (screen captures)."""

@@ -656,15 +656,21 @@ def computer_settings(
         if not text:
             return "No text provided to type."
         enter_after = str(params.get("press_enter", "false")).lower() in ("true", "1", "yes")
-        type_text(text, press_enter_after=enter_after)
-        return f"Typed: {text[:80]}"
+        try:
+            type_text(text, press_enter_after=enter_after)
+            return f"Typed: {text[:80]}"
+        except Exception as e:
+            return f"Type failed: {e}"
 
     if action == "press_key":
         key = str(value or params.get("key", "")).strip()
         if not key:
             return "No key specified."
-        press_key(key)
-        return f"Pressed: {key}"
+        try:
+            press_key(key)
+            return f"Pressed: {key}"
+        except Exception as e:
+            return f"Press key failed: {e}"
 
     if action in ("reload_n", "refresh_n", "reload_page_n"):
         try:
@@ -674,12 +680,18 @@ def computer_settings(
             return f"Reload failed: {e}"
 
     if action == "scroll_up":
-        scroll_up(int(value or 500))
-        return "Scrolled up."
+        try:
+            scroll_up(int(value or 500))
+            return "Scrolled up."
+        except Exception as e:
+            return f"Scroll up failed: {e}"
 
     if action == "scroll_down":
-        scroll_down(int(value or 500))
-        return "Scrolled down."
+        try:
+            scroll_down(int(value or 500))
+            return "Scrolled down."
+        except Exception as e:
+            return f"Scroll down failed: {e}"
 
     func = ACTION_MAP.get(action)
     if not func:

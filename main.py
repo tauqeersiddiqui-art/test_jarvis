@@ -1,6 +1,27 @@
 import platform as _platform
 import subprocess as _subprocess
 
+# ── DPI awareness: must be set before ANY import (e.g. pyautogui, pulled in
+# transitively by actions.computer_control/computer_settings below) has a
+# chance to call the legacy SetProcessDPIAware() first. Windows only allows a
+# process's DPI-awareness mode to be set once; whichever call wins first
+# determines the mode, and callers that lose just fail silently. If pyautogui
+# wins, Qt's own later call inside QApplication() fails with
+# "SetProcessDpiAwarenessContext() failed: Access is denied." Setting the
+# modern per-monitor-v2 context ourselves, first, means our call wins instead.
+if _platform.system() == "Windows":
+    import ctypes as _ctypes
+    try:
+        # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4 (Windows 10 1703+)
+        if not _ctypes.windll.user32.SetProcessDpiAwarenessContext(-4):
+            raise OSError("SetProcessDpiAwarenessContext returned FALSE")
+    except Exception:
+        try:
+            _ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
+        except Exception:
+            pass
+# ─────────────────────────────────────────────────────────────────────────────
+
 # ── Nuclear: force CREATE_NO_WINDOW on EVERY subprocess call on Windows ───────
 # This patches Popen itself, so no per-file flag is needed anywhere.
 if _platform.system() == "Windows":
@@ -16,14 +37,20 @@ if _platform.system() == "Windows":
 # ─────────────────────────────────────────────────────────────────────────────
 
 import asyncio
+import os
 import re
 import threading
 import time
 import json
 import sys
 import traceback
+
+import numpy as np
 from datetime import datetime
 from pathlib import Path
+
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 import sounddevice as sd
 from google import genai
@@ -56,6 +83,8 @@ from actions.git_control       import git_control
 from actions.shell_exec        import shell_exec
 from actions.telegram_notify   import telegram_notify
 from actions.image_generator   import image_generator
+from actions.codebase_search   import codebase_search
+from actions.investigate       import investigate
 
 
 def get_base_dir():
@@ -65,7 +94,6 @@ def get_base_dir():
 
 
 BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
 LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 CHANNELS            = 1
@@ -74,8 +102,10 @@ RECEIVE_SAMPLE_RATE = 24000
 CHUNK_SIZE          = 1024
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("GEMINI_API_KEY is not set in the environment.")
+    return key
 
 
 def _load_system_prompt() -> str:
@@ -83,9 +113,10 @@ def _load_system_prompt() -> str:
         return PROMPT_PATH.read_text(encoding="utf-8")
     except Exception:
         return (
-            "You are JARVIS, Tony Stark's AI assistant. "
+            "You are JARVIS, an AI assistant created by Tauqeer. "
             "Be concise, direct, and always use the provided tools to complete tasks. "
-            "Never simulate or guess results — always call the appropriate tool."
+            "Never simulate or guess results — always call the appropriate tool. "
+            "If asked who your creator is, reply: 'My creator is Tauqeer.'"
         )
 
 _CTRL_RE = re.compile(r"<ctrl\d+>", re.IGNORECASE)
@@ -602,6 +633,62 @@ TOOL_DECLARATIONS = [
             "required": ["prompt"]
         }
     },
+    {
+        "name": "codebase_search",
+        "description": (
+            "Read-only codebase search and discovery in the active workspace. Use for "
+            "finding files, searching code text/regex, locating class/function/import "
+            "definitions and usages, entry points, config files, related tests, or the "
+            "overall project structure. Never modifies files and never requires "
+            "confirmation. Prefer 'investigate' instead when the user asks an open-ended "
+            "question that needs reasoning across multiple files."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": (
+                        "set_workspace | get_workspace | search_filename | search_text | "
+                        "search_symbol | find_entry_points | find_config | find_tests | "
+                        "structure | read_files"
+                    )
+                },
+                "path":          {"type": "STRING",  "description": "For set_workspace: the project root to make active."},
+                "query":         {"type": "STRING",  "description": "For search_filename/search_text: the name or text/regex to search for."},
+                "mode":          {"type": "STRING",  "description": "For search_filename: exact | partial | extension | glob. Default partial."},
+                "regex":         {"type": "BOOLEAN", "description": "For search_text: treat query as a regex instead of literal text."},
+                "case_sensitive":{"type": "BOOLEAN", "description": "For search_text: case-sensitive match. Default false."},
+                "max_results":   {"type": "INTEGER", "description": "For search_text: cap on returned matches. Default 100."},
+                "symbol":        {"type": "STRING",  "description": "For search_symbol: the class/function/import name to look up."},
+                "kind":          {"type": "STRING",  "description": "For search_symbol: class | function | import | reference | any. Default any."},
+                "target":        {"type": "STRING",  "description": "For find_tests: a source file path or symbol name to find related tests for."},
+                "max_depth":     {"type": "INTEGER", "description": "For structure: directory depth to show. Default 3."},
+                "paths":         {"type": "STRING",  "description": "For read_files: comma-separated workspace-relative file paths to read."},
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "investigate",
+        "description": (
+            "Investigates an open-ended coding question across the active workspace like "
+            "an engineer would: iteratively searches, inspects the strongest matches, "
+            "follows imports/references, assembles grounded file:line evidence, and asks "
+            "AIProvider to answer using only that evidence — it will say so explicitly if "
+            "the evidence doesn't fully answer the question, rather than guessing. Use for "
+            "'find where X is used', 'trace how X reaches Y', 'find the code responsible "
+            "for this bug', 'explain how this feature works across files', 'find dead "
+            "references', 'find related tests'. Read-only, never requires confirmation."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "question": {"type": "STRING", "description": "The coding question to investigate."},
+            },
+            "required": ["question"]
+        }
+    },
 ]
 
 # --- Plugin system ---
@@ -663,8 +750,10 @@ class JarvisLive:
             self._is_speaking = value
         if value:
             self.ui.set_state("SPEAKING")
-        elif not self.ui.muted:
-            self.ui.set_state("LISTENING")
+        else:
+            self.ui.set_speaker_level(0.0)
+            if not self.ui.muted:
+                self.ui.set_state("LISTENING")
 
     def interrupt(self) -> None:
         """Stop JARVIS mid-speech: drain queued audio and open mic immediately."""
@@ -892,6 +981,14 @@ class JarvisLive:
                 r = await loop.run_in_executor(None, lambda: image_generator(parameters=args, player=self.ui))
                 result = r or "Done."
 
+            elif name == "codebase_search":
+                r = await loop.run_in_executor(None, lambda: codebase_search(parameters=args, player=self.ui))
+                result = r or "Done."
+
+            elif name == "investigate":
+                r = await loop.run_in_executor(None, lambda: investigate(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Done."
+
             elif name == "shutdown_jarvis":
                 self.ui.write_log("SYS: Shutdown requested.")
                 self.speak("Goodbye, sir.")
@@ -928,6 +1025,13 @@ class JarvisLive:
         loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
+            # Real mic amplitude (RMS of this chunk, normalised 0..1) -> HUD core.
+            # Gain factor accounts for normal speech RMS being a small fraction
+            # of int16 full scale; this is a scaling of a real measurement, not
+            # a synthetic/fake level.
+            rms = float(np.sqrt(np.mean(indata.astype(np.float32) ** 2)) / 32768.0)
+            self.ui.set_mic_level(min(1.0, rms * 4.0))
+
             with self._speaking_lock:
                 jarvis_speaking = self._is_speaking
             if not jarvis_speaking and not self.ui.muted and not self._phone_active:
@@ -1094,6 +1198,13 @@ class JarvisLive:
                         self._turn_done_event.clear()
                     continue
                 self.set_speaking(True)
+                # Real JARVIS speech amplitude (RMS of this ~50ms output slice,
+                # normalised 0..1) -> HUD core. Computed on actual playback
+                # audio, not a fixed/fake repeating pulse.
+                samples = np.frombuffer(chunk, dtype=np.int16)
+                if samples.size:
+                    rms = float(np.sqrt(np.mean(samples.astype(np.float32) ** 2)) / 32768.0)
+                    self.ui.set_speaker_level(min(1.0, rms * 3.0))
                 try:
                     await asyncio.to_thread(stream.write, chunk)
                 except (RuntimeError, asyncio.CancelledError):

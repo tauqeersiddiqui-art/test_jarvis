@@ -1,6 +1,9 @@
 sounddevice
 google-genai
 google-generativeai
+openai
+python-dotenv
+pytest
 pillow
 requests
 beautifulsoup4

@@ -7,9 +7,18 @@
     "date_of_birth": {
       "value": "1974-12-08",
       "updated": "2026-07-10"
+    },
+    "name": {
+      "value": "Tauqeer Siddiqui",
+      "updated": "2026-07-11"
     }
   },
-  "preferences": {},
+  "preferences": {
+    "greeting_style": {
+      "value": "Assalam/Acha",
+      "updated": "2026-07-11"
+    }
+  },
   "projects": {},
   "relationships": {},
   "wishes": {},
