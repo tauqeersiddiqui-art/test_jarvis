@@ -12,9 +12,15 @@ except ImportError:
 
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
-_SAFE_ROOTS: list[Path] = [
-    Path.home(),
-]
+def _get_safe_roots() -> list[Path]:
+    """Every local drive on Windows, or '/' elsewhere — full-PC access by voice."""
+    if _OS == "Windows":
+        import string
+        drives = [Path(f"{d}:\\") for d in string.ascii_uppercase if Path(f"{d}:\\").exists()]
+        return drives or [Path.home()]
+    return [Path("/")]
+
+_SAFE_ROOTS: list[Path] = _get_safe_roots()
 
 def _is_safe_path(target: Path) -> bool:
     """Verilen path _SAFE_ROOTS içinde mi? Değilse işlemi reddet."""

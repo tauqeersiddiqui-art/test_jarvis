@@ -52,6 +52,10 @@ from actions.computer_control  import computer_control
 from actions.game_updater      import game_updater
 from actions.system_monitor    import SystemMonitor, get_system_status
 from actions.proactive         import ProactiveEngine
+from actions.git_control       import git_control
+from actions.shell_exec        import shell_exec
+from actions.telegram_notify   import telegram_notify
+from actions.image_generator   import image_generator
 
 
 def get_base_dir():
@@ -511,6 +515,93 @@ TOOL_DECLARATIONS = [
             "required": ["category", "key", "value"]
         }
     },
+    {
+        "name": "git_control",
+        "description": (
+            "Runs git operations on a local repository. Use for source-control requests: "
+            "checking status/diff/log, committing, pushing, pulling, branching, or cloning. "
+            "Write/network actions (commit, add_all_commit, push, pull, fetch, clone, checkout, "
+            "branch create/delete) require the user's explicit confirmation — if the tool asks "
+            "you to confirm, relay that to the user and only re-call with confirmed='yes' once "
+            "they agree."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "status | diff | log | commit | add_all_commit | push | pull | fetch | branch | checkout | clone"
+                },
+                "path":      {"type": "STRING",  "description": "Repository folder. Defaults to the JARVIS project folder."},
+                "message":   {"type": "STRING",  "description": "Commit message, for commit/add_all_commit."},
+                "staged":    {"type": "BOOLEAN", "description": "For diff: show staged changes instead of unstaged."},
+                "n":         {"type": "INTEGER", "description": "For log: number of entries to show."},
+                "remote":    {"type": "STRING",  "description": "Remote name for push/pull/fetch. Defaults to 'origin'."},
+                "branch":    {"type": "STRING",  "description": "Branch name for push/pull/checkout."},
+                "create":    {"type": "STRING",  "description": "For branch: name of a new branch to create."},
+                "delete":    {"type": "STRING",  "description": "For branch: name of a branch to delete."},
+                "url":       {"type": "STRING",  "description": "Repository URL, for clone."},
+                "directory": {"type": "STRING",  "description": "Target directory, for clone."},
+                "confirmed": {"type": "STRING",  "description": "Set to 'yes' after the user confirms a write/network action."},
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "shell_exec",
+        "description": (
+            "Runs a PowerShell command or a workspace Python file. Use only when the user "
+            "explicitly asks to run a command, script, or diagnostic that no other tool covers. "
+            "Every command is safety-classified first — if the tool asks you to confirm, relay "
+            "that to the user and only re-call with confirmed='yes' once they agree. Never chain "
+            "this with computer_settings actions (power, volume, etc.) — use those tools instead."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action":    {"type": "STRING",  "description": "run_command (default) or run_python"},
+                "command":   {"type": "STRING",  "description": "The PowerShell command to run, for run_command."},
+                "file":      {"type": "STRING",  "description": "Workspace-relative .py file to run, for run_python."},
+                "args":      {"type": "STRING",  "description": "Space-separated arguments to pass to the Python file."},
+                "path":      {"type": "STRING",  "description": "Working directory. Defaults to the JARVIS project folder."},
+                "timeout":   {"type": "INTEGER", "description": "Timeout in seconds. Defaults to 120."},
+                "confirmed": {"type": "STRING",  "description": "Set to 'yes' after the user confirms a workspace-changing or dangerous command."},
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "telegram_notify",
+        "description": (
+            "Sends a text message to the user's configured Telegram chat via bot. "
+            "Use when the user asks to notify them, or send/forward something, on Telegram."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "message": {"type": "STRING", "description": "The message text to send."},
+            },
+            "required": ["message"]
+        }
+    },
+    {
+        "name": "image_generator",
+        "description": (
+            "Generates an image from a text prompt using Gemini and saves it locally. "
+            "This is a billed API call, so it requires the user's explicit confirmation — "
+            "if the tool asks you to confirm, relay that to the user and only re-call with "
+            "confirmed='yes' once they agree."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "prompt":    {"type": "STRING", "description": "Description of the image to generate."},
+                "filename":  {"type": "STRING", "description": "Optional output filename (without needing an extension)."},
+                "confirmed": {"type": "STRING", "description": "Set to 'yes' after the user confirms the billed image generation."},
+            },
+            "required": ["prompt"]
+        }
+    },
 ]
 
 # --- Plugin system ---
@@ -784,6 +875,22 @@ class JarvisLive:
             elif name == "system_status":
                 r = await loop.run_in_executor(None, get_system_status)
                 result = str(r)
+
+            elif name == "git_control":
+                r = await loop.run_in_executor(None, lambda: git_control(parameters=args, player=self.ui))
+                result = r or "Done."
+
+            elif name == "shell_exec":
+                r = await loop.run_in_executor(None, lambda: shell_exec(parameters=args, player=self.ui))
+                result = r or "Done."
+
+            elif name == "telegram_notify":
+                r = await loop.run_in_executor(None, lambda: telegram_notify(parameters=args, player=self.ui))
+                result = r or "Done."
+
+            elif name == "image_generator":
+                r = await loop.run_in_executor(None, lambda: image_generator(parameters=args, player=self.ui))
+                result = r or "Done."
 
             elif name == "shutdown_jarvis":
                 self.ui.write_log("SYS: Shutdown requested.")
