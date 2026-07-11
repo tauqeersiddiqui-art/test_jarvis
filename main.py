@@ -64,10 +64,11 @@ from actions.file_processor import file_processor
 from actions.flight_finder     import flight_finder
 from actions.open_app          import open_app
 from actions.weather_report    import weather_action
-from actions.send_message      import send_message
+from actions.send_message      import send_message, whatsapp_send
 from actions.reminder          import reminder
 from actions.computer_settings import computer_settings
 from actions.screen_processor  import _capture_camera, _capture_screen
+from actions.file_ops          import file_ops
 from actions.youtube_video     import youtube_video
 from actions.desktop           import desktop_control
 from actions.browser_control   import browser_control
@@ -121,7 +122,7 @@ def _load_system_prompt() -> str:
 
 _CTRL_RE = re.compile(r"<ctrl\d+>", re.IGNORECASE)
 
-def _clean_transcript(text: str) -> str:    
+def _clean_transcript(text: str) -> str:
     text = _CTRL_RE.sub("", text)
     text = re.sub(r"[\x00-\x08\x0b-\x1f]", "", text)
     return text.strip()
@@ -689,6 +690,74 @@ TOOL_DECLARATIONS = [
             "required": ["question"]
         }
     },
+    {
+        "name": "file_ops",
+        "description": (
+            "Workspace-aware file operations: read (with line ranges), create, "
+            "replace text (exact or line range), append, delete, rename, diff, "
+            "validate Python syntax. All operations respect workspace boundaries, "
+            "sensitive-file protection, and atomic writes. Write operations require "
+            "confirmation gate. Never auto-commits or pushes."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": (
+                        "create | read | replace_exact | replace_lines | append | "
+                        "delete | rename | diff | validate_syntax | revert_last | journal"
+                    )
+                },
+                "path":              {"type": "STRING",  "description": "Workspace-relative file path"},
+                "start_line":        {"type": "INTEGER", "description": "Start line (1-indexed) for read/replace_lines/diff"},
+                "end_line":          {"type": "INTEGER", "description": "End line (1-indexed) for read/replace_lines/diff"},
+                "content":           {"type": "STRING",  "description": "File content for create/append"},
+                "old_text":          {"type": "STRING",  "description": "Text to replace for replace_exact"},
+                "new_text":          {"type": "STRING",  "description": "Replacement text for replace_exact"},
+                "new_lines":         {"type": "STRING",  "description": "Replacement lines for replace_lines"},
+                "new_path":          {"type": "STRING",  "description": "New path for rename"},
+                "create_if_missing": {"type": "BOOLEAN", "description": "Create file if missing for append (default: false)"},
+                "validate_py":       {"type": "BOOLEAN", "description": "Validate Python syntax before write (default: false)"},
+                "context_lines":     {"type": "INTEGER", "description": "Context lines for diff (default: 3)"},
+                "confirmed":         {"type": "STRING",  "description": "Set to 'yes' after user confirms a write operation"},
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "whatsapp_send",
+        "description": (
+            "Send a WhatsApp message with multi-turn slot filling. "
+            "Asks for recipient and message if not provided, resolves contacts safely "
+            "(asks for clarification if ambiguous), and requires confirmation before sending. "
+            "Supports cancel/never mind. Do NOT use send_message for WhatsApp — use this tool instead."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "receiver":     {"type": "STRING", "description": "Recipient contact name or phone number"},
+                "recipient":    {"type": "STRING", "description": "Alias for receiver (either field works)"},
+                "message_text": {"type": "STRING", "description": "The message to send"},
+                "message":      {"type": "STRING", "description": "Alias for message_text (either field works)"},
+                "confirmed":    {"type": "STRING", "description": "Set to 'yes' after user confirms the send"},
+                "cancel":       {"type": "STRING", "description": "Set to 'yes' to cancel the pending send (say 'never mind' / 'stop')"},
+            },
+            "required": []
+        }
+    },
+    {
+        "name": "cancel_pending_action",
+        "description": (
+            "Cancel any currently pending action (e.g., a multi-turn WhatsApp send waiting for confirmation). "
+            "Call this when the user says cancel, never mind, stop, or forget it."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {},
+            "required": []
+        }
+    },
 ]
 
 # --- Plugin system ---
@@ -988,6 +1057,18 @@ class JarvisLive:
             elif name == "investigate":
                 r = await loop.run_in_executor(None, lambda: investigate(parameters=args, player=self.ui, speak=self.speak))
                 result = r or "Done."
+
+            elif name == "file_ops":
+                r = await loop.run_in_executor(None, lambda: file_ops(parameters=args, player=self.ui))
+                result = r or "Done."
+
+            elif name == "whatsapp_send":
+                r = await loop.run_in_executor(None, lambda: whatsapp_send(parameters=args, player=self.ui, session_memory=None))
+                result = r or "Done."
+
+            elif name == "cancel_pending_action":
+                from core.pending_action import cancel_pending_action
+                result = cancel_pending_action(parameters=args, player=self.ui)
 
             elif name == "shutdown_jarvis":
                 self.ui.write_log("SYS: Shutdown requested.")
