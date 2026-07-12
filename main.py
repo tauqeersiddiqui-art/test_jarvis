@@ -343,11 +343,11 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "code_helper",
-        "description": "Writes, edits, explains, runs, or builds code files.",
+        "description": "Writes, edits, explains, runs, or builds a SINGLE code file/script. For creating a whole new app or multi-file project, use dev_agent instead.",
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action":      {"type": "STRING", "description": "write | edit | explain | run | build | auto (default: auto)"},
+                "action":      {"type": "STRING", "description": "write | edit | explain | run | build (single-file only — use dev_agent for full apps) | auto (default: auto)"},
                 "description": {"type": "STRING", "description": "What the code should do or what change to make"},
                 "language":    {"type": "STRING", "description": "Programming language (default: python)"},
                 "output_path": {"type": "STRING", "description": "Where to save the file"},
@@ -361,7 +361,7 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "dev_agent",
-        "description": "Builds complete multi-file projects from scratch: plans, writes files, installs deps, opens VSCode, runs and fixes errors.",
+        "description": "Creates/builds a COMPLETE new app or multi-file project from scratch, AND continues/fixes/extends the user's current active coding project across conversation turns (it tracks that state itself — just pass the user's request as-is). Use this whenever the user asks to create/build an app or project (not a single script), OR says things like 'continue the app', 'fix the current error', 'fix it', 'add X to it', or 'update the project'.",
         "parameters": {
             "type": "OBJECT",
             "properties": {

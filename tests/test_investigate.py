@@ -5,6 +5,8 @@ from actions import investigate as inv
 
 
 class _FakeProvider:
+    provider_id = "fake"
+
     def __init__(self, text="ok"):
         self.text = text
         self.calls = []
@@ -63,7 +65,7 @@ def test_bounded_context_prioritises_earlier_higher_ranked_evidence():
 def test_investigate_sends_bounded_evidence_not_whole_repo(project, monkeypatch):
     monkeypatch.setattr(inv.ws, "get_workspace", lambda: project)
     fake = _FakeProvider(text="helper_func is defined in utils/helper.py:1 and called from main.py:5.")
-    monkeypatch.setattr(aip, "get_provider", lambda: fake)
+    monkeypatch.setattr(aip, "build_failover_chain", lambda: [fake])
 
     result = inv.investigate({"question": "find where helper_func is used"})
 
@@ -80,7 +82,7 @@ def test_investigate_sends_bounded_evidence_not_whole_repo(project, monkeypatch)
 def test_investigate_skips_llm_call_when_no_evidence(project, monkeypatch):
     monkeypatch.setattr(inv.ws, "get_workspace", lambda: project)
     fake = _FakeProvider(text="should never be returned")
-    monkeypatch.setattr(aip, "get_provider", lambda: fake)
+    monkeypatch.setattr(aip, "build_failover_chain", lambda: [fake])
 
     result = inv.investigate({"question": "zzz_totally_nonexistent_symbol_9999"})
 
@@ -98,7 +100,7 @@ def test_investigate_falls_back_gracefully_when_provider_unavailable(project, mo
 
     def _raise():
         raise aip.ProviderConfigError("no credentials configured")
-    monkeypatch.setattr(aip, "get_provider", _raise)
+    monkeypatch.setattr(aip, "build_failover_chain", _raise)
 
     result = inv.investigate({"question": "find where helper_func is used"})
     assert "AIProvider unavailable" in result
@@ -114,7 +116,7 @@ def test_no_write_capable_calls_in_module_source():
 def test_investigate_does_not_modify_files(project, monkeypatch):
     monkeypatch.setattr(inv.ws, "get_workspace", lambda: project)
     fake = _FakeProvider(text="ok")
-    monkeypatch.setattr(aip, "get_provider", lambda: fake)
+    monkeypatch.setattr(aip, "build_failover_chain", lambda: [fake])
 
     before = {p: p.stat().st_mtime_ns for p in project.rglob("*") if p.is_file()}
     inv.investigate({"question": "find where helper_func is used"})

@@ -6,8 +6,8 @@ Builds a bounded, file:line-grounded evidence context from real search
 results (never the whole repository) and hands it to AIProvider exactly
 once, with strict instructions not to invent facts beyond the evidence.
 
-Does not modify core/ai_provider.py or provider selection — this module is
-a consumer of get_provider(), nothing more.
+Does not implement provider selection or failover itself — this module is a
+consumer of core/ai_provider.complete_with_failover(), nothing more.
 """
 from __future__ import annotations
 
@@ -234,17 +234,12 @@ def investigate(parameters: dict, response=None, player=None, session_memory=Non
 
     context = _assemble_bounded_context(evidence)
 
-    try:
-        from core.ai_provider import get_provider
-        provider = get_provider()
-    except Exception as e:
-        return f"AIProvider unavailable ({e}). Returning raw evidence instead:\n\n{context}"
-
     prompt = f"{_SYSTEM_INSTRUCTIONS}\n\nQUESTION: {question}\n\nEVIDENCE:\n{context}"
     try:
-        answer = provider.complete(prompt).text
+        from core.ai_provider import complete_with_failover
+        answer = complete_with_failover(prompt)[0].text
     except Exception as e:
-        return f"AIProvider call failed ({e}). Raw evidence:\n\n{context}"
+        return f"AIProvider unavailable ({e}). Returning raw evidence instead:\n\n{context}"
 
     evidence_list = "\n".join(
         f"- {e['file']}:{e['line']}" if e.get("line") else f"- {e['file']}"

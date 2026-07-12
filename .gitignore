@@ -1,5 +1,6 @@
 config/api_keys.json
 config/workspace.json
+config/state/
 .env
 .pytest_cache/
 __pycache__/

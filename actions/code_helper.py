@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import json
@@ -6,30 +7,30 @@ import time
 from pathlib import Path
 
 
-def get_base_dir():
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
-
-BASE_DIR           = get_base_dir()
-API_CONFIG_PATH    = BASE_DIR / "config" / "api_keys.json"
 DESKTOP            = Path.home() / "Desktop"
 MAX_BUILD_ATTEMPTS = 3
 GEMINI_MODEL       = "gemini-2.5-flash"
 
 
-def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+def _get_gemini_api_key() -> str:
+    """Raw Gemini key for the multimodal screen_debug path, which always needs
+    the real Gemini API regardless of which text provider is configured."""
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("GEMINI_API_KEY is not set in the environment (required for screen_debug).")
+    return key
 
 
-def _get_gemini(model: str = GEMINI_MODEL):
-    from google import genai
-    _c = genai.Client(api_key=_get_api_key())
+def _get_model(model: str = GEMINI_MODEL):
+    """Text-completion model with provider failover (see core/ai_provider.py):
+    tries Gemini, then an OpenAI-compatible/FreeLLM gateway if configured,
+    on a recoverable error (rate limit, quota, capacity, etc)."""
+    from core.ai_provider import complete_with_failover
 
     class _W:
         def generate_content(self, contents):
-            return _c.models.generate_content(model=model, contents=contents)
+            response, _attempts = complete_with_failover(contents, model=model)
+            return response
 
     return _W()
 
@@ -151,7 +152,7 @@ def _detect_intent(description: str, file_path: str, code: str) -> str:
 
 def _write(description: str, language: str, output_path: str, player=None) -> tuple[str, Path]:
     lang  = language or "python"
-    model = _get_gemini()
+    model = _get_model()
 
     prompt = f"""You are an expert {lang} developer.
 Write clean, working, well-commented {lang} code for the description below.
@@ -174,7 +175,7 @@ Code:"""
 
 
 def _fix_code(code: str, error_output: str, description: str) -> str:
-    model  = _get_gemini()
+    model  = _get_model()
     prompt = f"""You are an expert debugger.
 The code below failed with the following error. Fix it.
 Return ONLY the corrected code — no explanation, no markdown, no backticks.
@@ -308,7 +309,7 @@ def _edit_action(file_path, instruction, player) -> str:
     if player:
         player.write_log("[Code] Editing file...")
 
-    model  = _get_gemini()
+    model  = _get_model()
     prompt = f"""You are an expert code editor.
 Apply the following change to the code below.
 Return ONLY the complete updated code — no explanation, no markdown, no backticks.
@@ -342,7 +343,7 @@ def _explain_action(file_path, code, player) -> str:
     if player:
         player.write_log("[Code] Analyzing code...")
 
-    model  = _get_gemini()
+    model  = _get_model()
     prompt = f"""Explain what this code does in simple, clear language.
 Focus on: what it does, how it works, and any important details.
 Be concise — 3 to 6 sentences maximum.
@@ -383,7 +384,7 @@ def _optimize_action(file_path, code, language, output_path, player) -> str:
         player.write_log("[Code] Optimizing code...")
 
     lang  = language or "python"
-    model = _get_gemini()
+    model = _get_model()
 
     prompt = f"""You are an expert {lang} developer and code reviewer.
 Optimize the following code for:
@@ -449,7 +450,7 @@ def _screen_debug_action(description, file_path, player, speak=None) -> str:
         from google import genai
         from google.genai import types
 
-        client = genai.Client(api_key=_get_api_key())
+        client = genai.Client(api_key=_get_gemini_api_key())
 
         image_bytes  = screenshot_path.read_bytes()
         image_base64 = _image_to_base64(screenshot_path)
