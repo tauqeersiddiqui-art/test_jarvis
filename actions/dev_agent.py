@@ -10,6 +10,7 @@ from pathlib import Path
 from core import workspace as ws
 from core import coding_task as ct
 from core import engineering_memory as em
+from core import coding_orchestrator as orch
 
 
 PROJECTS_DIR         = Path.home() / "Desktop" / "JarvisProjects"
@@ -1393,22 +1394,22 @@ def dev_agent(
     speak=None,
 ) -> str:
     """
-    JARVIS tool entry point. Orchestrates coding-task continuity (see
-    core/coding_task.py) around the existing build/run/fix pipeline:
+    JARVIS tool entry point. Delegates "what kind of coding task is this,
+    and where should it go" to core/coding_orchestrator.py's decide(), then
+    dispatches to the existing build/run/fix pipeline below unchanged:
 
-    - No active task + a normal build description  -> start a new task.
-    - No active task + continuation-shaped language -> ask which project,
-      never guess one.
-    - Active task + explicit "a NEW/another app" language -> start a new
-      task anyway (the active one is left as-is on disk, just no longer
-      tracked as "current").
-    - Active task + "fix it" / "continue" style language -> resume the
-      SAME project's validate/fix loop (_continue_fix_loop_for_task),
-      using whatever is currently on disk — no re-plan, no rewrite.
-    - Active task + "add X" / feature language (or anything else, as long
-      as it's not an explicit new-project request) -> re-run the full
-      build pipeline pointed at the SAME project directory/name, which
-      also transparently reopens a COMPLETED/FAILED task.
+    - MISSING_DESCRIPTION   -> ask for a description.
+    - NEEDS_CLARIFICATION   -> ask which project, never guess one.
+    - NEW_PROJECT           -> _build_project (fresh build, or an explicit
+                               "a NEW/another app" request — the previously
+                               active task, if any, is left as-is on disk,
+                               just no longer tracked as "current").
+    - CONTINUE_FIX          -> _continue_fix_loop_for_task (resume the SAME
+                               project's validate/fix loop using whatever is
+                               currently on disk — no re-plan, no rewrite).
+    - CONTINUE_FEATURE      -> _run_incremental_feature_change (surgical
+                               edit on the SAME project; also transparently
+                               reopens a COMPLETED/FAILED task).
     """
     p            = parameters or {}
     description  = p.get("description", "").strip()
@@ -1416,37 +1417,18 @@ def dev_agent(
     project_name = p.get("project_name", "").strip()
     timeout      = int(p.get("timeout", 30))
 
-    if not description:
-        return "Please describe the project you want me to build, sir."
+    decision = orch.decide(description, project_name=project_name, language=language)
 
-    active     = ct.load_active_task()
-    forces_new = ct.looks_like_new_project_request(description)
+    if decision.route in (orch.Route.MISSING_DESCRIPTION, orch.Route.NEEDS_CLARIFICATION):
+        return decision.message
 
-    if not forces_new and active:
-        if ct.looks_like_fix_continuation(description) and not ct.looks_like_feature_continuation(description):
-            ct.continue_task(active, description)
-            return _continue_fix_loop_for_task(active, timeout, speak=speak, player=player)
+    if decision.route == orch.Route.CONTINUE_FIX:
+        return _continue_fix_loop_for_task(decision.task, timeout, speak=speak, player=player)
 
-        # Feature-add or generic continuation: surgical incremental change
-        # on the SAME project — never the fresh-project planner/writer.
-        ct.continue_task(active, description)
-        return _run_incremental_feature_change(active, description, timeout, speak=speak, player=player)
+    if decision.route == orch.Route.CONTINUE_FEATURE:
+        return _run_incremental_feature_change(decision.task, description, timeout, speak=speak, player=player)
 
-    if not forces_new and ct.looks_like_continuation_request(description) and not active:
-        return (
-            "There's no active coding project for me to continue, sir. "
-            "Which project did you mean, or would you like me to start a new one?"
-        )
-
-    # Brand-new project. project_name/project_root are finalized inside
-    # _build_project once the planner picks a name (if the caller didn't
-    # specify one) — this task record is updated at that point.
-    task = ct.start_task(
-        original_goal = description,
-        project_name  = project_name,
-        project_root  = "",
-        language      = language,
-    )
+    # orch.Route.NEW_PROJECT
     return _build_project(
         description  = description,
         language     = language,
@@ -1454,5 +1436,5 @@ def dev_agent(
         timeout      = timeout,
         speak        = speak,
         player       = player,
-        task         = task,
+        task         = decision.task,
     )

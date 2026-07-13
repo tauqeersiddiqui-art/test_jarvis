@@ -137,6 +137,26 @@ Mark XLVIII/
 
 ---
 
+## 📚 Documentation
+
+This file covers project overview, quick start, and repository structure only. Deeper
+documentation lives in a small hierarchy:
+
+| Document | Answers |
+|---|---|
+| [`PRODUCT_VISION.md`](PRODUCT_VISION.md) | Why does Mark exist? Long-term direction, non-goals, commercial vision. Strategic authority — never an implementation checklist. |
+| [`ROADMAP.md`](ROADMAP.md) | How does the project evolve? Implementation phases, dependencies, acceptance criteria, testing requirements. Current implementation authority. |
+| [`JARVIS_STATE.md`](JARVIS_STATE.md) | What's the current execution state — completed work, current phase, pending work, known blockers? |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | How do the subsystems fit together? Data flow, no implementation details. |
+| [`MODULES/`](MODULES/) | What does a specific module do — purpose, public interface, dependencies, limitations? |
+| [`DECISIONS/`](DECISIONS/) | Why was a specific architectural choice made — problem, alternatives, decision, consequences? |
+
+`D:\All Bots\mini_agent` is a separate, permanently frozen historical reference
+project (architecture reference / lessons learned only) — it is not part of this
+repository and is never an active development target for Mark XLVIII.
+
+---
+
 ## ⚠️ License
 
 Personal and non-commercial use only.
