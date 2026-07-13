@@ -106,7 +106,10 @@ Last updated: 2026-07-14
         ├─► (write files, snapshot first)
         ├─► run/validate
         ├─► core/engineering_memory.py — record the outcome (success/failed/rolled_back)
-        └─► on failure/rejection: rollback to the pre-write snapshot
+        ├─► on failure/rejection: rollback to the pre-write snapshot
+        └─► core/execution_ledger.py    — record one deterministic ledger entry for
+                                           this whole call (internal engineering log,
+                                           not user-facing memory)
         │
         ▼
  Result narrated back through main.py / ui.py

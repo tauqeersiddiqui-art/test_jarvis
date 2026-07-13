@@ -8,6 +8,7 @@ import pytest
 import core.ai_provider as aip
 import core.coding_task as ct
 import core.engineering_memory as em
+import core.execution_ledger as led
 import core.workspace as ws
 from actions import dev_agent
 
@@ -736,11 +737,13 @@ def test_build_project_rollback_does_not_mutate_active_workspace(monkeypatch, tm
 def isolated_coding_task_state(tmp_path, monkeypatch):
     state_file = tmp_path / "config" / "state" / "coding_task.json"
     monkeypatch.setattr(ct, "STATE_FILE", state_file)
-    # Engineering memory is wired into the same execution paths as
-    # CodingTask — isolate it too so no test ever touches Mark's real
-    # config/state/engineering_memory.json.
+    # Engineering memory and the Execution Ledger are wired into the same
+    # execution paths as CodingTask — isolate them too so no test ever
+    # touches Mark's real config/state/*.json files.
     memory_file = tmp_path / "config" / "state" / "engineering_memory.json"
     monkeypatch.setattr(em, "STATE_FILE", memory_file)
+    ledger_file = tmp_path / "config" / "state" / "execution_ledger.json"
+    monkeypatch.setattr(led, "STATE_FILE", ledger_file)
     return state_file
 
 
@@ -870,6 +873,59 @@ def test_dev_agent_plain_new_build_with_no_active_task_still_builds(monkeypatch,
 
     assert "working" in result
     assert captured["task"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Execution Ledger integration — one entry per routed dev_agent() call.
+# ---------------------------------------------------------------------------
+
+def test_dev_agent_logs_ledger_entry_with_success_on_completed_task(monkeypatch, isolated_coding_task_state):
+    def fake_build_project(**kwargs):
+        ct.mark_completed(kwargs["task"], last_step="run")
+        return "Project is working, sir."
+    monkeypatch.setattr(dev_agent, "_build_project", fake_build_project)
+
+    dev_agent.dev_agent(parameters={"description": "Build me a calculator app"})
+
+    active = ct.load_active_task()
+    entries = led.entries_for_task(active.task_id)
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.routing_decision == "new_project"
+    assert entry.operation_type == "build"
+    assert entry.action_performed == "_build_project"
+    assert entry.result == led.Result.SUCCESS
+    assert entry.duration_seconds >= 0
+
+
+def test_dev_agent_logs_ledger_entry_with_rollback_on_failed_task(monkeypatch, isolated_coding_task_state):
+    existing = ct.start_task(
+        original_goal="Build me a calculator app",
+        project_name="calculator_app",
+        project_root="/tmp/JarvisProjects/calculator_app",
+    )
+    existing.record_error("NameError: name 'x' is not defined", signature="NameError:main.py:3")
+    ct.save_task(existing)
+
+    def fake_resume(task, timeout, speak=None, player=None):
+        ct.mark_failed(task, last_step="fix_loop_exhausted")
+        return "Couldn't fully fix it, sir."
+    monkeypatch.setattr(dev_agent, "_continue_fix_loop_for_task", fake_resume)
+
+    dev_agent.dev_agent(parameters={"description": "Fix the current error"})
+
+    entries = led.entries_for_task(existing.task_id)
+    assert len(entries) == 1
+    assert entries[0].routing_decision == "continue_fix"
+    assert entries[0].operation_type == "runtime_fix"
+    assert entries[0].result == led.Result.ROLLBACK
+
+
+def test_dev_agent_missing_description_and_clarification_log_no_ledger_entry(monkeypatch, isolated_coding_task_state):
+    dev_agent.dev_agent(parameters={"description": ""})
+    dev_agent.dev_agent(parameters={"description": "Fix the current error"})  # no active task -> clarification
+
+    assert led._load_all() == []
 
 
 # ---------------------------------------------------------------------------

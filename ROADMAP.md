@@ -89,6 +89,7 @@ safety net, and remember what it tried across restarts.
 | Evidence-driven build → fix → validate → rollback loop | `actions/dev_agent.py` | `tests/test_dev_agent.py` | Complete |
 | Generic pending-action / slot-filling | `core/pending_action.py` | `tests/test_pending_action.py` | Complete |
 | Coding request routing/classification (single entry point for future coding capabilities) | `core/coding_orchestrator.py` | `tests/test_coding_orchestrator.py` | Complete (2026-07-14) |
+| Execution Ledger (deterministic internal log of every routed coding operation) | `core/execution_ledger.py` | `tests/test_execution_ledger.py` + integration tests in `tests/test_dev_agent.py` | Complete (2026-07-14) |
 
 ### Acceptance criteria (met)
 
@@ -124,6 +125,17 @@ pipelines (`_build_project`, `_continue_fix_loop_for_task`,
 capabilities should route requests through `decide()` rather than reimplementing
 classification or calling `dev_agent.py`'s internal pipelines directly. See
 `MODULES/CodingOrchestrator.md`.
+
+### Execution Ledger (added 2026-07-14)
+
+`core/execution_ledger.py`'s `record()`/`entries_for_task()` give a deterministic,
+append-only internal log of every `dev_agent()` call — timestamp, task ID, operation
+type, routing decision, action performed, files touched, duration, and a result
+(success/failure/rollback derived from `CodingTask.status`, see `DECISIONS/ADR-007.md`).
+It is an internal engineering log, not user-facing memory, and does not duplicate
+`core/engineering_memory.py`'s per-attempt outcome recall. Wired into
+`actions/dev_agent.py`'s `dev_agent()` only (one entry per top-level call); no
+existing pipeline logic was moved or rewritten. See `MODULES/ExecutionLedger.md`.
 
 ### Known issues (not blocking, tracked for future work)
 

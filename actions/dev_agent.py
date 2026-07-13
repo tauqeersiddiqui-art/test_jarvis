@@ -11,6 +11,7 @@ from core import workspace as ws
 from core import coding_task as ct
 from core import engineering_memory as em
 from core import coding_orchestrator as orch
+from core import execution_ledger as led
 
 
 PROJECTS_DIR         = Path.home() / "Desktop" / "JarvisProjects"
@@ -1386,6 +1387,37 @@ def _run_incremental_feature_change(
     )
 
 
+def _log_ledger_entry(decision, operation_type: str, action_performed: str, start_time: float) -> None:
+    """Records one Execution Ledger entry for this dev_agent() call — a
+    deterministic internal engineering log, not user-facing memory (see
+    core/execution_ledger.py, MODULES/ExecutionLedger.md). Classifies the
+    result from task.status, which the pipeline that just ran has already
+    set: COMPLETED -> success, FAILED -> rollback (dev_agent.py's fix/feature
+    pipelines always roll back to the last good state before marking a task
+    FAILED — see DECISIONS/ADR-007.md), anything else -> failure (an
+    unexpected state, logged for engineering visibility). No task (the
+    MISSING_DESCRIPTION/NEEDS_CLARIFICATION routes) means no operation ran,
+    so nothing is logged."""
+    task = decision.task
+    if task is None:
+        return
+    if task.status == ct.Status.COMPLETED:
+        result = led.Result.SUCCESS
+    elif task.status == ct.Status.FAILED:
+        result = led.Result.ROLLBACK
+    else:
+        result = led.Result.FAILURE
+    led.record(
+        task_id=task.task_id,
+        operation_type=operation_type,
+        routing_decision=decision.route,
+        action_performed=action_performed,
+        files_touched=task.files_touched,
+        duration_seconds=time.time() - start_time,
+        result=result,
+    )
+
+
 def dev_agent(
     parameters: dict,
     response=None,
@@ -1423,18 +1455,30 @@ def dev_agent(
         return decision.message
 
     if decision.route == orch.Route.CONTINUE_FIX:
-        return _continue_fix_loop_for_task(decision.task, timeout, speak=speak, player=player)
+        start = time.time()
+        try:
+            return _continue_fix_loop_for_task(decision.task, timeout, speak=speak, player=player)
+        finally:
+            _log_ledger_entry(decision, "runtime_fix", "_continue_fix_loop_for_task", start)
 
     if decision.route == orch.Route.CONTINUE_FEATURE:
-        return _run_incremental_feature_change(decision.task, description, timeout, speak=speak, player=player)
+        start = time.time()
+        try:
+            return _run_incremental_feature_change(decision.task, description, timeout, speak=speak, player=player)
+        finally:
+            _log_ledger_entry(decision, "feature_change", "_run_incremental_feature_change", start)
 
     # orch.Route.NEW_PROJECT
-    return _build_project(
-        description  = description,
-        language     = language,
-        project_name = project_name,
-        timeout      = timeout,
-        speak        = speak,
-        player       = player,
-        task         = decision.task,
-    )
+    start = time.time()
+    try:
+        return _build_project(
+            description  = description,
+            language     = language,
+            project_name = project_name,
+            timeout      = timeout,
+            speak        = speak,
+            player       = player,
+            task         = decision.task,
+        )
+    finally:
+        _log_ledger_entry(decision, "build", "_build_project", start)

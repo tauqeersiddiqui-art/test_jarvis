@@ -4,7 +4,7 @@ Status: Current execution state snapshot. Read this before starting new work in 
 session, alongside `ROADMAP.md` (implementation authority) and `PRODUCT_VISION.md`
 (strategic authority).
 
-Last updated: 2026-07-14 (Coding Orchestrator capability completed)
+Last updated: 2026-07-14 (Execution Ledger capability completed)
 
 ---
 
@@ -43,6 +43,10 @@ modules and their corresponding tests. Summary:
   build/fix/feature-change pipelines in `actions/dev_agent.py`. Extracted from logic
   previously inline in `dev_agent()`; behavior unchanged, all 218 pre-existing tests
   pass plus 6 new ones (224 total). See `MODULES/CodingOrchestrator.md`.
+- Execution Ledger (`core/execution_ledger.py`, 2026-07-14): deterministic internal
+  log of every routed coding operation, wired into `dev_agent()` only. All 224
+  pre-existing tests pass plus 12 new ones (236 total). See
+  `MODULES/ExecutionLedger.md` and `DECISIONS/ADR-007.md`.
 
 ## Pending Work
 
