@@ -1442,6 +1442,10 @@ def dev_agent(
     - CONTINUE_FEATURE      -> _run_incremental_feature_change (surgical
                                edit on the SAME project; also transparently
                                reopens a COMPLETED/FAILED task).
+    - LOOP_DETECTED         -> the orchestrator's core/loop_detector.py found
+                               this task is stuck (see decision.loop_check);
+                               no pipeline runs, no further model call is
+                               spent — the message is returned as-is.
     """
     p            = parameters or {}
     description  = p.get("description", "").strip()
@@ -1451,7 +1455,7 @@ def dev_agent(
 
     decision = orch.decide(description, project_name=project_name, language=language)
 
-    if decision.route in (orch.Route.MISSING_DESCRIPTION, orch.Route.NEEDS_CLARIFICATION):
+    if decision.route in (orch.Route.MISSING_DESCRIPTION, orch.Route.NEEDS_CLARIFICATION, orch.Route.LOOP_DETECTED):
         return decision.message
 
     if decision.route == orch.Route.CONTINUE_FIX:

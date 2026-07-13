@@ -90,6 +90,7 @@ safety net, and remember what it tried across restarts.
 | Generic pending-action / slot-filling | `core/pending_action.py` | `tests/test_pending_action.py` | Complete |
 | Coding request routing/classification (single entry point for future coding capabilities) | `core/coding_orchestrator.py` | `tests/test_coding_orchestrator.py` | Complete (2026-07-14) |
 | Execution Ledger (deterministic internal log of every routed coding operation) | `core/execution_ledger.py` | `tests/test_execution_ledger.py` + integration tests in `tests/test_dev_agent.py` | Complete (2026-07-14) |
+| Loop Detection (deterministic stuck-task check before routing to the fix/feature pipeline) | `core/loop_detector.py` | `tests/test_loop_detector.py` + integration tests in `tests/test_coding_orchestrator.py` | Complete (2026-07-14) |
 
 ### Acceptance criteria (met)
 
@@ -136,6 +137,17 @@ It is an internal engineering log, not user-facing memory, and does not duplicat
 `core/engineering_memory.py`'s per-attempt outcome recall. Wired into
 `actions/dev_agent.py`'s `dev_agent()` only (one entry per top-level call); no
 existing pipeline logic was moved or rewritten. See `MODULES/ExecutionLedger.md`.
+
+### Loop Detection (added 2026-07-14)
+
+`core/loop_detector.py`'s `check_for_loop()` is a deterministic, no-LLM check for
+whether a task is stuck (repeated rollback, routing decision, fingerprint, error
+signature, or files touched with zero success, or zero successes at all across a
+window of attempts). `core/coding_orchestrator.py`'s `decide()` calls it before
+routing a `CONTINUE_FIX`/`CONTINUE_FEATURE` request to the existing pipeline; if a
+loop is detected, `decide()` returns `Route.LOOP_DETECTED` and no pipeline runs — no
+further model call is spent. Nothing in `actions/dev_agent.py`'s pipelines was
+touched. See `MODULES/LoopDetector.md` and `DECISIONS/ADR-008.md`.
 
 ### Known issues (not blocking, tracked for future work)
 

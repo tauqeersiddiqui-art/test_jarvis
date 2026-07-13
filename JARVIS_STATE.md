@@ -4,7 +4,7 @@ Status: Current execution state snapshot. Read this before starting new work in 
 session, alongside `ROADMAP.md` (implementation authority) and `PRODUCT_VISION.md`
 (strategic authority).
 
-Last updated: 2026-07-14 (Execution Ledger capability completed)
+Last updated: 2026-07-14 (Loop Detection capability completed)
 
 ---
 
@@ -47,6 +47,10 @@ modules and their corresponding tests. Summary:
   log of every routed coding operation, wired into `dev_agent()` only. All 224
   pre-existing tests pass plus 12 new ones (236 total). See
   `MODULES/ExecutionLedger.md` and `DECISIONS/ADR-007.md`.
+- Loop Detection (`core/loop_detector.py`, 2026-07-14): deterministic, no-LLM check
+  for a stuck task, wired into `core/coding_orchestrator.py`'s `decide()` only (new
+  `Route.LOOP_DETECTED`). All 236 pre-existing tests pass plus 17 new ones (253
+  total). See `MODULES/LoopDetector.md` and `DECISIONS/ADR-008.md`.
 
 ## Pending Work
 

@@ -28,12 +28,22 @@ inline in actions/dev_agent.py's dev_agent() entry point.
 Future coding capabilities should route requests through decide() rather
 than reimplementing this classification or calling actions/dev_agent.py's
 internal pipelines directly.
+
+Also reuses core/loop_detector.py: before routing a CONTINUE_FIX or
+CONTINUE_FEATURE request to the existing fix/feature pipeline, this module
+checks whether that task is stuck in a deterministic loop (see
+DECISIONS/ADR-008.md for why this check lives here rather than inside
+actions/dev_agent.py). If a loop is detected, decide() returns
+Route.LOOP_DETECTED instead of routing to the pipeline — no pipeline runs,
+so no further LLM call is spent. The decision to stop is the orchestrator's;
+nothing here retries, overrides, or auto-continues past a detected loop.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from core import coding_task as ct
+from core import loop_detector as ld
 
 
 class Route:
@@ -42,13 +52,15 @@ class Route:
     CONTINUE_FEATURE    = "continue_feature"
     NEEDS_CLARIFICATION = "needs_clarification"
     MISSING_DESCRIPTION = "missing_description"
+    LOOP_DETECTED       = "loop_detected"
 
 
 @dataclass
 class RoutingDecision:
     route: str
     task: "ct.CodingTask | None" = None   # the active/newly-started task, or None
-    message: str = ""                     # set only for NEEDS_CLARIFICATION / MISSING_DESCRIPTION
+    message: str = ""                     # set for NEEDS_CLARIFICATION / MISSING_DESCRIPTION / LOOP_DETECTED
+    loop_check: "ld.LoopCheckResult | None" = None  # set only for LOOP_DETECTED
 
 
 def decide(description: str, project_name: str = "", language: str = "python") -> RoutingDecision:
@@ -83,6 +95,18 @@ def decide(description: str, project_name: str = "", language: str = "python") -
     forces_new = ct.looks_like_new_project_request(description)
 
     if not forces_new and active:
+        loop_check = ld.check_for_loop(active.task_id)
+        if loop_check.loop_detected:
+            return RoutingDecision(
+                route=Route.LOOP_DETECTED,
+                task=active,
+                message=(
+                    f"I've noticed this task isn't making progress, sir — {loop_check.reason.replace('_', ' ')}. "
+                    f"{loop_check.recommendation}"
+                ),
+                loop_check=loop_check,
+            )
+
         if ct.looks_like_fix_continuation(description) and not ct.looks_like_feature_continuation(description):
             ct.continue_task(active, description)
             return RoutingDecision(route=Route.CONTINUE_FIX, task=active)

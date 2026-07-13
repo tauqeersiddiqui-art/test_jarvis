@@ -1,6 +1,8 @@
 import pytest
 
 import core.coding_task as ct
+import core.engineering_memory as em
+import core.execution_ledger as led
 from core import coding_orchestrator as orch
 
 
@@ -8,6 +10,11 @@ from core import coding_orchestrator as orch
 def isolated_coding_task_state(tmp_path, monkeypatch):
     state_file = tmp_path / "config" / "state" / "coding_task.json"
     monkeypatch.setattr(ct, "STATE_FILE", state_file)
+    # decide() now also runs core/loop_detector.py, which reads both of
+    # these — isolate them too so no test ever touches Mark's real
+    # config/state/*.json files.
+    monkeypatch.setattr(em, "STATE_FILE", tmp_path / "config" / "state" / "engineering_memory.json")
+    monkeypatch.setattr(led, "STATE_FILE", tmp_path / "config" / "state" / "execution_ledger.json")
     return state_file
 
 
@@ -92,3 +99,66 @@ def test_explicit_new_project_request_overrides_active_task(isolated_coding_task
     # the previously active task is left untouched on disk, just no longer current
     active = ct.load_active_task()
     assert active.task_id == decision.task.task_id
+
+
+# ---------------------------------------------------------------------------
+# Loop detection — decide() must not route to the pipeline for a stuck task.
+# ---------------------------------------------------------------------------
+
+def test_stuck_task_routes_to_loop_detected_instead_of_continue_fix(isolated_coding_task_state):
+    existing = ct.start_task(
+        original_goal="Build me a calculator app",
+        project_name="calculator_app",
+        project_root="/tmp/JarvisProjects/calculator_app",
+    )
+    for _ in range(3):
+        led.record(
+            task_id=existing.task_id, operation_type="runtime_fix", routing_decision="continue_fix",
+            action_performed="_continue_fix_loop_for_task", files_touched=["main.py"],
+            duration_seconds=0.1, result=led.Result.ROLLBACK,
+        )
+
+    decision = orch.decide("Fix the current error")
+
+    assert decision.route == orch.Route.LOOP_DETECTED
+    assert decision.task.task_id == existing.task_id
+    assert decision.loop_check is not None
+    assert decision.loop_check.loop_detected is True
+    assert "rollback" in decision.message.lower() or "progress" in decision.message.lower()
+
+
+def test_stuck_task_routes_to_loop_detected_instead_of_continue_feature(isolated_coding_task_state):
+    existing = ct.start_task(
+        original_goal="Build me a calculator app",
+        project_name="calculator_app",
+        project_root="/tmp/JarvisProjects/calculator_app",
+    )
+    ct.mark_completed(existing)
+    for _ in range(3):
+        led.record(
+            task_id=existing.task_id, operation_type="feature_change", routing_decision="continue_feature",
+            action_performed="_run_incremental_feature_change", files_touched=["main.py"],
+            duration_seconds=0.1, result=led.Result.FAILURE,
+        )
+
+    decision = orch.decide("Add calculation history")
+
+    assert decision.route == orch.Route.LOOP_DETECTED
+    assert decision.task.task_id == existing.task_id
+
+
+def test_healthy_task_with_short_history_still_routes_normally(isolated_coding_task_state):
+    """A task with fewer than the loop-detection window's worth of history
+    must route exactly as before this capability existed."""
+    existing = ct.start_task(
+        original_goal="Build me a calculator app",
+        project_name="calculator_app",
+        project_root="/tmp/JarvisProjects/calculator_app",
+    )
+    existing.record_error("NameError: name 'x' is not defined", signature="NameError:main.py:3")
+    ct.save_task(existing)
+
+    decision = orch.decide("Fix the current error")
+
+    assert decision.route == orch.Route.CONTINUE_FIX
+    assert decision.loop_check is None

@@ -96,6 +96,9 @@ Last updated: 2026-07-14
         │                                 continue-feature) and route it; delegates
         │                                 back to dev_agent.py's own pipeline
         │                                 functions below for the actual work
+        │       └─► core/loop_detector.py — deterministic check: is this task stuck?
+        │                                    If so, routing stops here (no pipeline
+        │                                    call, no further model call spent)
         ├─► core/coding_task.py       — is there an active task? new vs. continuation?
         ├─► core/workspace.py         — resolve the target path, enforce the boundary
         ├─► actions/codebase_search.py — locate relevant files

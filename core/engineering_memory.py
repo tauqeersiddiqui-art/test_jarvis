@@ -359,6 +359,21 @@ def find_matching_failed_attempt(pkey: str, fingerprint: str):
     return candidates[0]
 
 
+def records_for_task(task_id: str) -> list:
+    """All engineering-memory records for a given task, oldest first — the
+    deterministic per-task read side of this module (mirrors
+    core/execution_ledger.py's entries_for_task()). Added for
+    core/loop_detector.py, which needs a task's own attempt history rather
+    than the project-scoped, error/change-similarity-ranked recall that
+    find_relevant_for_error()/find_relevant_for_change() already provide for
+    a different purpose (informing a new attempt, not detecting a loop)."""
+    try:
+        records = [r for r in _load_all() if r.task_id == task_id]
+    except Exception:
+        return []
+    return sorted(records, key=lambda r: r.timestamp)
+
+
 def summarize_records(records: list, max_chars: int = 500) -> str:
     """Bounded, human/AI-readable summary of recalled records — file paths,
     signatures, and outcomes only, never source content or prompts."""
