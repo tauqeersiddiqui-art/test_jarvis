@@ -93,6 +93,7 @@ safety net, and remember what it tried across restarts.
 | Loop Detection (deterministic stuck-task check before routing to the fix/feature pipeline) | `core/loop_detector.py` | `tests/test_loop_detector.py` + integration tests in `tests/test_coding_orchestrator.py` | Complete (2026-07-14) |
 | Learning Engine v1 (deterministic knowledge acquisition from local repository documentation + bounded docstrings) | `core/learning_engine.py` | `tests/test_learning_engine.py` | Complete (2026-07-14) |
 | Knowledge-Aware Investigation v1 (first Learning Engine consumer — bounded background knowledge context alongside evidence) | `actions/investigate.py` | `tests/test_investigate.py` | Complete (2026-07-14) |
+| Capability Gap Detection v1 (deterministic "does Mark have a capability for this?" check, derived from real `main.py` tool registration) | `core/capability_gap.py` | `tests/test_capability_gap.py` | Complete (2026-07-14) |
 
 ### Acceptance criteria (met)
 
@@ -184,6 +185,24 @@ not `PRODUCT_VISION.md`'s unbuilt Track S). This integration never calls `learn(
 — ingestion and consumption stay separate operations in v1 — and is not wired into
 `core/coding_orchestrator.py` or `core/engineering_memory.py` in this session. See
 `MODULES/Investigation.md`.
+
+### Capability Gap Detection v1 (added 2026-07-14)
+
+`core/capability_gap.py`'s `detect_gap()` is the first foundation for
+`PRODUCT_VISION.md`'s Capability First Principle: given a task/request, it
+deterministically classifies whether Mark already has a matching capability
+(`confidence`: `high` / `partial` / `none` / `ambiguous`), using a capability
+inventory built from **real registration evidence** — `main.py`'s own
+`TOOL_DECLARATIONS` list and tool-dispatch chain, extracted via AST/regex over
+`main.py`'s source text (never imported/executed). `core/learning_engine.py`'s
+`search()` is consulted only as bounded, clearly separate background knowledge —
+it is never part of the match score and can never upgrade a classification, per
+this module's Trust/Authority Rule (Product Vision/documentation text is never
+proof of an implemented capability; only `main.py`'s actual registered inventory
+counts). Never calls `learn()`, never calls an AI provider, never executes any
+capability, never modifies any file. Not wired into `main.py`'s tool dispatch,
+`core/coding_orchestrator.py`, or any request-routing path in this session —
+normal request routing is unchanged. See `MODULES/CapabilityGap.md`.
 
 ### Known issues (not blocking, tracked for future work)
 

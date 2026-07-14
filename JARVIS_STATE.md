@@ -4,7 +4,7 @@ Status: Current execution state snapshot. Read this before starting new work in 
 session, alongside `ROADMAP.md` (implementation authority) and `PRODUCT_VISION.md`
 (strategic authority).
 
-Last updated: 2026-07-14 (Knowledge-Aware Investigation v1 capability completed)
+Last updated: 2026-07-14 (Capability Gap Detection v1 capability completed)
 
 ---
 
@@ -65,6 +65,16 @@ modules and their corresponding tests. Summary:
   existing evidence-only behavior on any Learning Engine trouble. All 274
   pre-existing tests pass plus 11 new ones (285 total). See
   `MODULES/Investigation.md`.
+- Capability Gap Detection v1 (`core/capability_gap.py`, 2026-07-14): deterministic
+  "does Mark have a capability for this?" check. Inventory is derived from real
+  `main.py` tool registration (AST-parsed `TOOL_DECLARATIONS` + dispatch-chain
+  cross-check), never a hand-maintained list. Classifies a task as
+  high/partial/none/ambiguous via bounded token-overlap matching; consults
+  Learning Engine only as non-scoring background context, so Product Vision text
+  can never be mistaken for an implemented capability. Never calls `learn()`, never
+  calls an AI provider, never executes a capability, never modifies a file. Not
+  wired into request routing this session. All 285 pre-existing tests pass plus 25
+  new ones (310 total). See `MODULES/CapabilityGap.md`.
 
 ## Pending Work
 
