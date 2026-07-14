@@ -4,7 +4,7 @@ Status: Current execution state snapshot. Read this before starting new work in 
 session, alongside `ROADMAP.md` (implementation authority) and `PRODUCT_VISION.md`
 (strategic authority).
 
-Last updated: 2026-07-14 (Loop Detection capability completed)
+Last updated: 2026-07-14 (Knowledge-Aware Investigation v1 capability completed)
 
 ---
 
@@ -51,6 +51,20 @@ modules and their corresponding tests. Summary:
   for a stuck task, wired into `core/coding_orchestrator.py`'s `decide()` only (new
   `Route.LOOP_DETECTED`). All 236 pre-existing tests pass plus 17 new ones (253
   total). See `MODULES/LoopDetector.md` and `DECISIONS/ADR-008.md`.
+- Learning Engine v1 (`core/learning_engine.py`, 2026-07-14): deterministic knowledge
+  acquisition from local repository documentation (`*.md` files) and bounded
+  source-code docstrings — change detection via whole-file content hash, content-hash
+  deduplication, atomic persistence, and a small `search()`/`get_unit()`/`stats()`
+  query API. Standalone Core Service, not wired into any existing pipeline. All 253
+  pre-existing tests pass plus 21 new ones (274 total). See
+  `MODULES/LearningEngine.md`.
+- Knowledge-Aware Investigation v1 (`actions/investigate.py`, 2026-07-14): first
+  consumer of Learning Engine v1 — a bounded, best-effort `le.search()` lookup runs
+  alongside evidence gathering and is assembled into a separate `KNOWLEDGE CONTEXT`
+  block, always secondary to evidence. Never calls `learn()`; fails safe to the
+  existing evidence-only behavior on any Learning Engine trouble. All 274
+  pre-existing tests pass plus 11 new ones (285 total). See
+  `MODULES/Investigation.md`.
 
 ## Pending Work
 

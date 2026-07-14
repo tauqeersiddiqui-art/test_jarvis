@@ -559,3 +559,413 @@ classified as one of:
 Every subsystem proposal must state which classification applies and why, alongside
 the existing requirement (Part 1) to document benefits, risks, maintenance, license,
 and integration complexity for any adoption.
+
+---
+
+## TRACK S — SECURITY & TRUST ARCHITECTURE
+
+*Added 2026-07-14, appended verbatim per explicit user instruction. Status: Long-term
+Product Vision. Not an implementation task for this session — Track S is not
+implemented as part of this session's work.*
+
+### Core Principle
+
+Mark XLVIII must assume that every external input, network source, website, document,
+model output, plugin, MCP server, tool result, process, and connected service could be
+malicious, compromised, manipulated, or untrusted.
+
+Security is a product requirement, not a future optional feature.
+
+The objective is not to claim that Mark XLVIII is "unhackable." No serious system can
+guarantee that.
+
+The objective is to build Mark XLVIII as an attack-resistant, least-privilege,
+zero-trust AI system that can detect suspicious behavior, limit blast radius, protect
+sensitive capabilities, and recover safely.
+
+### Future Security & Trust Architecture should include:
+
+**1. Zero Trust Architecture**
+
+Trust nothing automatically.
+
+External content must never inherit the authority of the owner or verified user.
+
+Internet content, websites, PDFs, emails, APIs, MCP responses, plugins, and model
+output are data, not trusted instructions.
+
+**2. Least Privilege**
+
+Every subsystem, agent, expert mode, plugin, and MCP server should receive only the
+minimum permissions required for its task.
+
+Example:
+
+Yoga Mode may use camera and display capabilities but should not automatically receive
+Git, shell, registry, secrets, or messaging permissions.
+
+Coding Mode may access an approved workspace and development tools but should not
+automatically receive camera or personal messaging permissions.
+
+**3. Permission Engine**
+
+Future capabilities should declare required permissions.
+
+Permissions may include:
+
+- camera
+- microphone
+- screen observation
+- filesystem read
+- filesystem write
+- shell execution
+- browser control
+- network access
+- Git operations
+- messaging
+- contacts
+- secrets
+- system settings
+- registry
+- external services
+
+Sensitive permissions should support deny, allow, and ask-for-confirmation policies.
+
+**4. Identity and Owner Verification**
+
+Sensitive actions should eventually distinguish between:
+
+- Owner
+- Verified user
+- Guest
+- Unknown person
+- External content or service
+
+Future identity signals may include device authentication, session identity, voice
+verification, face verification, paired-phone approval, or PIN fallback.
+
+No single weak biometric signal should automatically grant unrestricted control.
+
+**5. Secret Vault and Secure Credential Storage**
+
+API keys, passwords, OAuth tokens, cookies, session credentials, and private tokens
+should not be stored in ordinary source files or plain configuration when secure
+platform storage is available.
+
+Future platform adapters should use appropriate secure storage such as Windows
+Credential Manager, macOS Keychain, Android Keystore, or equivalent protected storage.
+
+**6. Process and Capability Isolation**
+
+Failure or compromise of one capability should not automatically grant access to
+unrelated capabilities.
+
+Browser automation should not automatically control coding.
+
+Vision should not automatically access secrets.
+
+A plugin should not automatically inherit Mark's full authority.
+
+Sensitive capabilities should have clear trust boundaries.
+
+**7. Plugin and MCP Sandboxing**
+
+Every future plugin and MCP integration should declare:
+
+- requested permissions
+- filesystem scope
+- network scope
+- available tools
+- sensitive-data access
+- execution limits
+
+Unknown or excessive permission requests should be rejected or require explicit
+approval.
+
+**8. Threat Detection**
+
+Future security systems should detect suspicious conditions such as:
+
+- unexpected code modification
+- repeated unauthorized actions
+- unusual child processes
+- unexpected outbound connections
+- suspicious capability escalation
+- repeated permission bypass attempts
+- abnormal tool usage
+- integrity failures
+
+Detection must be evidence-based and should avoid pretending that normal behavior is
+an attack.
+
+**9. Integrity Verification and Tamper Detection**
+
+Critical Mark components should eventually support integrity verification.
+
+Protected areas may include:
+
+- core/
+- actions/
+- security components
+- provider configuration
+- permission policies
+- capability manifests
+
+Unexpected modification of protected components should create a security event.
+
+For sensitive operations, Mark may enter a restricted mode until integrity is
+verified.
+
+**10. Prompt Injection Protection**
+
+Instructions found inside websites, documents, emails, tool output, MCP responses, or
+retrieved content must not automatically become owner instructions.
+
+External content must remain untrusted data.
+
+Examples of hostile external instructions include requests to:
+
+- ignore system policy
+- reveal secrets
+- send credentials
+- delete files
+- execute shell commands
+- disable security
+- modify memory
+- escalate permissions
+
+Mark should separate task instructions from analyzed content.
+
+**11. Tool Injection Protection**
+
+Tool results must not be allowed to silently authorize additional tools or
+capabilities.
+
+A browser page cannot grant shell permission.
+
+An MCP response cannot grant secret access.
+
+A document cannot authorize file deletion.
+
+Authority must come from verified user intent and approved policy.
+
+**12. Behavior Monitoring**
+
+Future security monitoring should detect when a subsystem behaves outside its expected
+purpose.
+
+Example:
+
+A Yoga capability unexpectedly requesting Git credentials or opening a banking website
+should be treated as suspicious.
+
+Behavior monitoring should compare requested actions against capability purpose and
+granted permissions.
+
+**13. Network Monitoring**
+
+Future network security may observe Mark-owned process connections for:
+
+- unknown outbound destinations
+- unexpected downloads
+- suspicious DNS behavior
+- unusual connection patterns
+
+Network monitoring must remain bounded to Mark's own security scope and must not
+become unrestricted surveillance of unrelated people or devices.
+
+**14. Session Protection**
+
+Future sessions should protect against:
+
+- stolen tokens
+- duplicated sessions
+- unauthorized device use
+- session hijacking
+- stale authentication
+
+Sensitive actions may require renewed verification.
+
+**15. Emergency Lockdown**
+
+Mark should eventually have an emergency lockdown capability.
+
+When compromise is reasonably suspected, lockdown may:
+
+- stop autonomous execution
+- cancel pending actions
+- disable plugins and MCP integrations
+- block sensitive tools
+- lock secret access
+- stop background workers
+- preserve security evidence
+- notify the owner
+
+Lockdown should fail safely.
+
+**16. Recovery Mode**
+
+Mark should support a restricted recovery mode where AI-driven sensitive execution is
+disabled.
+
+Recovery Mode should allow the owner to:
+
+- inspect integrity state
+- review security events
+- restore trusted configuration
+- disable suspicious integrations
+- recover from known-good state
+
+**17. Security Dashboard**
+
+Future product interfaces should expose understandable security state.
+
+Possible information:
+
+- identity state
+- integrity status
+- active permissions
+- plugin permissions
+- MCP permissions
+- security events
+- network warnings
+- lockdown state
+- last integrity verification
+
+The dashboard must not expose secret values.
+
+**18. Security Audit Ledger**
+
+Security-sensitive actions should eventually be recorded separately from the Coding
+Execution Ledger.
+
+A security event record may include:
+
+- timestamp
+- actor or identity class
+- requested capability
+- permission
+- risk classification
+- approval state
+- action result
+- security decision
+
+The ledger must avoid storing passwords, API keys, tokens, or unnecessary private
+content.
+
+**19. Capability Security Review**
+
+Every future capability should be evaluated before it is considered complete.
+
+The review should identify:
+
+- required permissions
+- trust boundaries
+- external inputs
+- abuse scenarios
+- sensitive data exposure
+- failure behavior
+- recovery path
+
+Security should be designed with the capability, not retrofitted after every product
+feature is finished.
+
+**20. Platform Security Separation**
+
+Mark XLVIII is intended to evolve beyond a Windows-only desktop application.
+
+Security-sensitive core policy should remain platform-independent where practical.
+
+Platform-specific secure operations should be implemented through adapters for:
+
+- Windows
+- macOS
+- Android
+- future supported platforms
+
+Core security policy should not be duplicated independently for every platform.
+
+### Security Authority Hierarchy
+
+Future security decisions should preserve a clear authority hierarchy:
+
+Owner
+
+↓
+
+Verified User
+
+↓
+
+Approved Policy
+
+↓
+
+Approved Memory and Explicit Preferences
+
+↓
+
+Approved Capability or Tool
+
+↓
+
+Trusted MCP or API within granted permissions
+
+↓
+
+External Content
+
+↓
+
+Model Inference or Guess
+
+Lower-authority sources must never silently override higher-authority sources.
+
+### Security Product Rule
+
+Never claim Mark XLVIII is unhackable.
+
+Never hide a detected security failure.
+
+Never fabricate a clean security state.
+
+Prefer containment, evidence, restricted execution, and safe recovery over pretending
+that an attack can never happen.
+
+Track S is Product Vision only. It is not implemented in this session, and its
+presence in this document does not authorize implementation — any future Track S work
+must go through the Standing Rules in Part 3 (its own proposal, dependency analysis,
+required tests, acceptance criteria, and risk level) like every other Track.
+
+---
+
+## PRODUCT PRINCIPLE — CAPABILITY FIRST
+
+*Added 2026-07-14, appended verbatim per explicit user instruction.*
+
+Mark should never reject a request before exhausting every available execution path.
+
+Before saying a task cannot be completed, Mark should evaluate:
+
+1. Native capabilities
+2. Installed MCP servers
+3. Local tools
+4. Browser automation
+5. Official APIs
+6. Installed plugins
+7. Existing project knowledge
+8. User-approved external services
+
+Never fabricate success.
+
+Never hide failures.
+
+Always provide the closest achievable solution.
+
+Record missing capabilities for future learning.
+
+This principle is Product Vision only in this session — it states the standard future
+capabilities should be judged against; it does not itself authorize implementing new
+fallback-execution behavior. Any future work that implements this principle (e.g. a
+capability-evaluation order, a missing-capability record) must go through the Standing
+Rules in Part 3 like every other proposal.

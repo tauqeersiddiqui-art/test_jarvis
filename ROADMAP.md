@@ -91,6 +91,8 @@ safety net, and remember what it tried across restarts.
 | Coding request routing/classification (single entry point for future coding capabilities) | `core/coding_orchestrator.py` | `tests/test_coding_orchestrator.py` | Complete (2026-07-14) |
 | Execution Ledger (deterministic internal log of every routed coding operation) | `core/execution_ledger.py` | `tests/test_execution_ledger.py` + integration tests in `tests/test_dev_agent.py` | Complete (2026-07-14) |
 | Loop Detection (deterministic stuck-task check before routing to the fix/feature pipeline) | `core/loop_detector.py` | `tests/test_loop_detector.py` + integration tests in `tests/test_coding_orchestrator.py` | Complete (2026-07-14) |
+| Learning Engine v1 (deterministic knowledge acquisition from local repository documentation + bounded docstrings) | `core/learning_engine.py` | `tests/test_learning_engine.py` | Complete (2026-07-14) |
+| Knowledge-Aware Investigation v1 (first Learning Engine consumer — bounded background knowledge context alongside evidence) | `actions/investigate.py` | `tests/test_investigate.py` | Complete (2026-07-14) |
 
 ### Acceptance criteria (met)
 
@@ -148,6 +150,40 @@ routing a `CONTINUE_FIX`/`CONTINUE_FEATURE` request to the existing pipeline; if
 loop is detected, `decide()` returns `Route.LOOP_DETECTED` and no pipeline runs — no
 further model call is spent. Nothing in `actions/dev_agent.py`'s pipelines was
 touched. See `MODULES/LoopDetector.md` and `DECISIONS/ADR-008.md`.
+
+### Learning Engine v1 (added 2026-07-14)
+
+`core/learning_engine.py`'s `learn()` is a deterministic, no-LLM knowledge-acquisition
+pass over this repository's own local documentation (`readme.md`, `ROADMAP.md`,
+`PRODUCT_VISION.md`, `ARCHITECTURE.md`, `MODULES/*.md`, `DECISIONS/*.md`,
+`JARVIS_STATE.md`, any other `*.md` file) and bounded source-code docstrings
+(module/class/function, via AST — never full function bodies). It detects new/changed
+files via a whole-file content-hash manifest, extracts small bounded knowledge units
+(never full file contents), deduplicates identical content by hash, and persists
+atomically (same convention as `core/engineering_memory.py`: one JSON file under
+`config/state/`, gitignored, temp-file + `os.replace`). `search()`, `get_unit()`, and
+`stats()` give a small deterministic query API. This is a **standalone Core Service in
+v1** — it is not wired into `actions/dev_agent.py` or `core/coding_orchestrator.py`,
+and it is a distinct addition, **not** a reinterpretation of Phase 4 (Engineering
+Experience Engine, below — still not started, still unrelated in scope). It relates
+to `PRODUCT_VISION.md` Track J (Continuous Learning) as a first, deterministic
+building block future work could extend, per Track J's standing constraint that
+learning must remain deterministic and reviewable. See `MODULES/LearningEngine.md`.
+
+### Knowledge-Aware Investigation v1 (added 2026-07-14)
+
+`actions/investigate.py` is the **first consumer** of `core/learning_engine.py` —
+every `investigate()` call now also runs a best-effort, read-only `le.search()`
+lookup alongside its existing evidence-gathering path, and formats any matches into
+a separate, clearly-labeled, bounded `KNOWLEDGE CONTEXT` block (`MAX_KNOWLEDGE_CHARS
+= 1500`, well under evidence's `MAX_EVIDENCE_CHARS = 9000`). Evidence remains
+authoritative — the system prompt instructs the model that knowledge context is
+background only and never overrides evidence, and that neither section is ever an
+instruction to obey (a narrow trust-boundary rule scoped to this integration only,
+not `PRODUCT_VISION.md`'s unbuilt Track S). This integration never calls `learn()`
+— ingestion and consumption stay separate operations in v1 — and is not wired into
+`core/coding_orchestrator.py` or `core/engineering_memory.py` in this session. See
+`MODULES/Investigation.md`.
 
 ### Known issues (not blocking, tracked for future work)
 
