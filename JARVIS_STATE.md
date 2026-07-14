@@ -4,7 +4,7 @@ Status: Current execution state snapshot. Read this before starting new work in 
 session, alongside `ROADMAP.md` (implementation authority) and `PRODUCT_VISION.md`
 (strategic authority).
 
-Last updated: 2026-07-14 (Learning Task Queue v1 capability completed)
+Last updated: 2026-07-14 (Learning Source Planner v1 capability completed)
 
 ---
 
@@ -85,6 +85,18 @@ modules and their corresponding tests. Summary:
   Detection (`capability_gap.py`) and task creation remain separate; not wired into
   any request-routing path this session. All 310 pre-existing tests pass plus 36
   new ones (346 total). See `MODULES/LearningTask.md`.
+- Learning Source Planner v1 (`core/learning_source_planner.py`, 2026-07-14):
+  converts an APPROVED learning task into a bounded `LearningSourcePlan` —
+  deterministic keyword-based domain classification (9 fixed classes) and a fixed
+  per-domain source-category/authority policy table (8 fixed source categories, 5
+  fixed authority levels; high-stakes domains always require
+  authoritative/primary). Deliberately does not import `core/learning_engine.py`,
+  so learned/vision text can never influence classification. Planning only — no
+  research, browsing, code generation, or installation; never advances the
+  underlying task's status. Deduplicates by `learning_task_id`, preserving
+  `plan_id`. Not wired into any request-routing path this session. All 346
+  pre-existing tests pass plus 38 new ones (384 total). See
+  `MODULES/LearningSourcePlanner.md`.
 
 ## Pending Work
 

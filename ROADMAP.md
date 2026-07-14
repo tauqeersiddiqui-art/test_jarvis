@@ -95,6 +95,7 @@ safety net, and remember what it tried across restarts.
 | Knowledge-Aware Investigation v1 (first Learning Engine consumer — bounded background knowledge context alongside evidence) | `actions/investigate.py` | `tests/test_investigate.py` | Complete (2026-07-14) |
 | Capability Gap Detection v1 (deterministic "does Mark have a capability for this?" check, derived from real `main.py` tool registration) | `core/capability_gap.py` | `tests/test_capability_gap.py` | Complete (2026-07-14) |
 | Learning Task Queue v1 (converts a confirmed capability gap into a persistent, deduplicated, bounded-lifecycle learning task — record only, no execution) | `core/learning_task.py` | `tests/test_learning_task.py` | Complete (2026-07-14) |
+| Learning Source Planner v1 (converts an approved learning task into a bounded source-acquisition plan — domain/authority classification only, no research/execution) | `core/learning_source_planner.py` | `tests/test_learning_source_planner.py` | Complete (2026-07-14) |
 
 ### Acceptance criteria (met)
 
@@ -221,6 +222,28 @@ or installs anything. Detection and task creation remain strictly separate:
 session wires `create_from_gap()` into `main.py`'s tool dispatch or any
 request-routing path. Never calls `learning_engine.learn()`, never calls an AI
 provider. See `MODULES/LearningTask.md`.
+
+### Learning Source Planner v1 (added 2026-07-14)
+
+`core/learning_source_planner.py`'s `create_plan_from_task()` converts an APPROVED
+`core/learning_task.py` `LearningTask` into a bounded `LearningSourcePlan` —
+planning only, never research, browsing, URL fetching, code generation, or
+installation. Domain classification (`classify_domain()`) is deterministic
+keyword-set overlap over nine fixed classes (`government_property,
+legal_regulatory, financial, medical, software_api, software_repository,
+hardware_device, general_knowledge, unknown`) with a two-tier strong/weak
+indicator design specifically so one incidental word can never falsely classify a
+task into a high-stakes domain; a genuine tie or an empty task both resolve to
+`unknown` rather than guessing. Source category (8 fixed values) and authority
+level (5 fixed values, high-stakes domains always `authoritative`/`primary`) come
+from a fixed per-domain policy table — never LLM-derived, never dynamically
+invented. Deliberately does not import `core/learning_engine.py` at all, so
+learned documentation or `PRODUCT_VISION.md` text can never influence a
+classification (Trust Rule: a plan is not evidence and not permission to access
+anything). Deduplicates by `learning_task_id`, preserving `plan_id` across repeat
+calls. Never calls `learning_task.update_status()` — a task's lifecycle is never
+advanced automatically. Not wired into any request-routing path this session. See
+`MODULES/LearningSourcePlanner.md`.
 
 ### Known issues (not blocking, tracked for future work)
 
