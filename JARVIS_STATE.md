@@ -4,7 +4,7 @@ Status: Current execution state snapshot. Read this before starting new work in 
 session, alongside `ROADMAP.md` (implementation authority) and `PRODUCT_VISION.md`
 (strategic authority).
 
-Last updated: 2026-07-14 (Capability Gap Detection v1 capability completed)
+Last updated: 2026-07-14 (Learning Task Queue v1 capability completed)
 
 ---
 
@@ -75,6 +75,16 @@ modules and their corresponding tests. Summary:
   calls an AI provider, never executes a capability, never modifies a file. Not
   wired into request routing this session. All 285 pre-existing tests pass plus 25
   new ones (310 total). See `MODULES/CapabilityGap.md`.
+- Learning Task Queue v1 (`core/learning_task.py`, 2026-07-14): converts a
+  CONFIRMED capability gap (`gap_detected is True` AND `confidence == "none"` —
+  partial matches are explicitly excluded even though they also set
+  `gap_detected=True`) into a persistent, deduplicated, bounded `LearningTask`.
+  Repeated gaps increment `occurrence_count`/`priority` and preserve the original
+  `task_id` rather than duplicating. Minimal validated status lifecycle records
+  transitions only — no automatic research, code generation, or installation.
+  Detection (`capability_gap.py`) and task creation remain separate; not wired into
+  any request-routing path this session. All 310 pre-existing tests pass plus 36
+  new ones (346 total). See `MODULES/LearningTask.md`.
 
 ## Pending Work
 

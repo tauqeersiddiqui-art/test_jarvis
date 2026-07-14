@@ -94,6 +94,7 @@ safety net, and remember what it tried across restarts.
 | Learning Engine v1 (deterministic knowledge acquisition from local repository documentation + bounded docstrings) | `core/learning_engine.py` | `tests/test_learning_engine.py` | Complete (2026-07-14) |
 | Knowledge-Aware Investigation v1 (first Learning Engine consumer — bounded background knowledge context alongside evidence) | `actions/investigate.py` | `tests/test_investigate.py` | Complete (2026-07-14) |
 | Capability Gap Detection v1 (deterministic "does Mark have a capability for this?" check, derived from real `main.py` tool registration) | `core/capability_gap.py` | `tests/test_capability_gap.py` | Complete (2026-07-14) |
+| Learning Task Queue v1 (converts a confirmed capability gap into a persistent, deduplicated, bounded-lifecycle learning task — record only, no execution) | `core/learning_task.py` | `tests/test_learning_task.py` | Complete (2026-07-14) |
 
 ### Acceptance criteria (met)
 
@@ -203,6 +204,23 @@ counts). Never calls `learn()`, never calls an AI provider, never executes any
 capability, never modifies any file. Not wired into `main.py`'s tool dispatch,
 `core/coding_orchestrator.py`, or any request-routing path in this session —
 normal request routing is unchanged. See `MODULES/CapabilityGap.md`.
+
+### Learning Task Queue v1 (added 2026-07-14)
+
+`core/learning_task.py`'s `create_from_gap()` converts a CONFIRMED capability gap
+(`core/capability_gap.py`'s `detect_gap()` result with `gap_detected is True` AND
+`confidence == "none"`) into a persistent, bounded, deduplicated `LearningTask` — a
+recorded need only, never permission to act. Repeated gaps for the same normalized
+missing capability increment `occurrence_count`/`priority` and refresh
+`last_seen_at` rather than creating a duplicate task, preserving the original
+`task_id`. A minimal, validated status lifecycle (`pending → approved → learning →
+completed/failed`, with `failed → pending` re-queue and a terminal `rejected`)
+records state transitions only — nothing here executes research, generates code,
+or installs anything. Detection and task creation remain strictly separate:
+`core/capability_gap.py` has no knowledge of this module, and nothing in this
+session wires `create_from_gap()` into `main.py`'s tool dispatch or any
+request-routing path. Never calls `learning_engine.learn()`, never calls an AI
+provider. See `MODULES/LearningTask.md`.
 
 ### Known issues (not blocking, tracked for future work)
 
